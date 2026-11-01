@@ -64,5 +64,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist && sha256sum InniSync-* > SHA256SUMS.txt
+          title="InniSync ${GITHUB_REF_NAME#v}" && alpha=()
+          case "$GITHUB_REF_NAME" in v0.*) title="$title (alpha)"; alpha=(--prerelease) ;; esac   # 0.x is alpha
           gh release create "$GITHUB_REF_NAME" InniSync-* SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --draft \
-            --title "InniSync ${GITHUB_REF_NAME#v}" --generate-notes
+            "${alpha[@]}" --title "$title" --generate-notes

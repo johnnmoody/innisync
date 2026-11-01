@@ -9,6 +9,10 @@ player itself: updates, backups, podcasts, audiobooks, themes and settings.
 InniSync is an unofficial project. It is not made by or affiliated with Innioasis or Apple.
 The screenshots use the public [Navidrome demo](https://demo.navidrome.org) library.
 
+> **Alpha.** InniSync is early software: it's used daily on one Y1, but expect rough edges, especially on Windows
+> and Linux. Back up your Y1 first (Summary tab, Back Up), and please
+> [report problems](https://github.com/johnnmoody/innisync/issues/new/choose).
+
 ## What it is
 The Y1 is a small music player with a click wheel. It runs Android 4.2 underneath, and most owners replace its
 player app with [InniClassic](https://github.com/FabianZettl/inniclassic). Getting music onto it normally means
