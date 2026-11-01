@@ -169,9 +169,11 @@ cd ui && npm install && npm run dev   # the interface, with the API proxied
 window through every area and writes the results to `~/Library/Logs/InniSync.log`.
 Tests: `python -m pytest -q` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
-- `innisync/` the server: library clients (`jellyfin.py`, `subsonic.py`), the Y1 over adb (`device.py`), sync
-  (`sync.py`), sound analysis (`soundalike.py`), smart playlists, podcasts, play counts, lyrics, backups, updates,
-  Wi-Fi, and the menu-bar item.
+- `innisync/` the server: `server.py` (HTTP, and who may talk to it), `routes/` (the API, one module per area),
+  `state.py` (preferences, the library, the connected Y1), library clients (`jellyfin.py`, `subsonic.py`), the Y1
+  over adb (`device.py`), sync (`sync.py`), sound analysis (`soundalike.py`), smart playlists, podcasts, play counts,
+  lyrics, themes, backups, updates, Wi-Fi, and the menu-bar item.
+- `tests/` see [CONTRIBUTING.md](CONTRIBUTING.md).
 - `ui/` the interface (Svelte). `DESIGN.md` holds its design direction.
 - `tools/` the app build and the icon drawing.
 

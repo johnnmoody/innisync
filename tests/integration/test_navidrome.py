@@ -15,7 +15,7 @@ import urllib.request
 
 import pytest
 
-from innisync import server, subsonic
+from innisync import server, state, subsonic
 
 ND = os.environ.get("INNISYNC_NAVIDROME") or shutil.which("navidrome") or os.path.expanduser("~/Library/Caches/innisync-test/nd/navidrome")
 FFMPEG = shutil.which("ffmpeg")
@@ -112,8 +112,8 @@ def test_streaming_downloads_and_covers(client, navidrome):
 
 
 def test_innisync_server_on_subsonic(client, monkeypatch):
-    monkeypatch.setattr(server, "load_prefs", lambda: {**server.DEFAULT_PREFS, "backend": "subsonic"})
-    server.S.reset()
+    monkeypatch.setattr(state, "load_prefs", lambda: {**state.DEFAULT_PREFS, "backend": "subsonic"})
+    state.S.reset()
     port = free_port()
     httpd = server.serve(port)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -126,4 +126,4 @@ def test_innisync_server_on_subsonic(client, monkeypatch):
         assert json.load(urllib.request.urlopen(req, timeout=30))["count"] == 2
     finally:
         httpd.shutdown()
-        server.S.reset()
+        state.S.reset()

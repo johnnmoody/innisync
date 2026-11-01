@@ -202,6 +202,15 @@ def read_manifest():
     return data
 
 
+def manifest_for_labels():
+    """The sync record for labels only (which songs InniSync put there): a damaged one just means no labels. Sync and
+    rebuild read it strictly, with read_manifest."""
+    try:
+        return read_manifest()
+    except ManifestError:
+        return json.loads(json.dumps(EMPTY_MANIFEST))
+
+
 def write_manifest(man):
     """Written next to the real one and renamed into place, so an interrupted write never leaves half a record."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:

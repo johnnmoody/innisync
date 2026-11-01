@@ -183,3 +183,25 @@ def download(ep, dest):
             f.write(chunk)
     if ep["date"]:
         os.utime(dest, (ep["date"], ep["date"]))   # adb push keeps it: the Y1's offline list dates by mtime
+
+
+def overview(force=False):
+    """Subscriptions on the Y1 with each feed's episodes (feeds read in parallel) and which are on the Y1 now."""
+    from concurrent.futures import ThreadPoolExecutor
+    subs = subscriptions()
+    on_y1 = downloaded()
+    mine = device.manifest_for_labels().get("podcasts", {})
+
+    def one(s):
+        try:
+            feed = fetch(s["url"], force=force)
+        except Exception as e:
+            return {**s, "error": str(e), "episodes": []}
+        eps = []
+        for e in feed["episodes"][:100]:
+            path = episode_path(s["name"], e["title"])
+            eps.append({**e, "title": e["title"].strip(), "onY1": path in on_y1, "byInniSync": path in mine})
+        return {**s, "title": feed["title"], "image": feed["image"], "episodes": eps}
+    with ThreadPoolExecutor(6) as pool:
+        out = list(pool.map(one, subs))
+    return {"podcasts": out, "rules": RULES}

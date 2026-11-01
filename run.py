@@ -8,7 +8,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from innisync.server import load_prefs, serve  # noqa: E402
+from innisync.server import serve  # noqa: E402
+from innisync.state import load_prefs  # noqa: E402
 
 PORT = int(os.environ.get("INNISYNC_PORT", "8765"))
 ICONS = os.path.join(HERE, "..", "icons")   # inside the app bundle: Contents/Resources/icons/<accent>.png

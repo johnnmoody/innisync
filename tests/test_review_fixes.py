@@ -6,8 +6,6 @@ import io
 import json
 import socket
 import threading
-import urllib.error
-import urllib.request
 
 import pytest
 
@@ -140,7 +138,7 @@ def test_unsubscribing_a_badly_named_podcast_deletes_nothing(monkeypatch):
 
 # ---------- the Y1's shell ----------
 def test_shell_ok_raises_when_the_y1_command_fails(monkeypatch):
-    y1 = FakeY1({"/a": b"1"}).install(monkeypatch)
+    FakeY1({"/a": b"1"}).install(monkeypatch)
     device.shell_ok("mv /a /b")
     with pytest.raises(device.DeviceError):
         device.shell_ok("mv /a /c")   # /a is gone now
