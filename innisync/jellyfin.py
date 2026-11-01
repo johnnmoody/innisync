@@ -206,18 +206,6 @@ class Jellyfin:
     def create_playlist(self, name, ids):
         return self.call("POST", "/Playlists", {"Name": name, "Ids": ids, "UserId": self.user_id, "MediaType": "Audio"})
 
-    def add_to_playlist(self, playlist_id, ids):
-        for i in range(0, len(ids), 100):
-            q = urllib.parse.urlencode({"ids": ",".join(ids[i:i + 100]), "userId": self.user_id})
-            self.call("POST", f"/Playlists/{playlist_id}/Items?{q}")
-
-    def clear_playlist(self, playlist_id):
-        res = self.call("GET", f"/Playlists/{playlist_id}/Items?userId={self.user_id}")
-        entry_ids = [it.get("PlaylistItemId") for it in res["Items"] if it.get("PlaylistItemId")]
-        for i in range(0, len(entry_ids), 100):
-            q = urllib.parse.urlencode({"entryIds": ",".join(entry_ids[i:i + 100])})
-            self.call("DELETE", f"/Playlists/{playlist_id}/Items?{q}")
-
     # ---- media -------------------------------------------------------------
     def learn(self, songs):
         """Nothing to pick up from cached songs: Jellyfin serves art by item id."""
@@ -246,6 +234,10 @@ class Jellyfin:
             hdrs["Range"] = range_header
         return urllib.request.Request(url, headers=hdrs)
 
-    def audio_source(self, item_id):
-        """(url, extra ffmpeg headers) for reading the original audio (sound analysis)."""
-        return f"{self.base}/Audio/{item_id}/stream?static=true", f"Authorization: {self.headers()['Authorization']}\r\n"
+    def source_request(self, item_id, range_header=None):
+        """Request for the original audio file (sound analysis reads it through the server's /stream proxy, so the
+        sign-in never goes on an ffmpeg command line where other programs could read it)."""
+        hdrs = self.headers()
+        if range_header:
+            hdrs["Range"] = range_header
+        return urllib.request.Request(f"{self.base}/Audio/{item_id}/stream?static=true", headers=hdrs)

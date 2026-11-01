@@ -1,5 +1,6 @@
 <script>
   // InniClassic's own settings, saved to the Y1 with Apply (the player restarts to pick them up).
+  import { onMount } from "svelte";
   import { st } from "../../lib/store.svelte.js";
   import { api } from "../../lib/api.js";
   let err = $state("");
@@ -11,7 +12,7 @@
     err = "";
     try { const p = await api("/api/device/player"); st.player = p.settings; st.playerSaved = structuredClone(p.settings); } catch (e) { err = e.message; }
   }
-  $effect(() => { load(); });
+  onMount(load);   // once per visit: an $effect would re-run every time load() replaces st.player
   const p = $derived(st.player);
 </script>
 

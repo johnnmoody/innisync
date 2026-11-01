@@ -73,34 +73,40 @@ def match(p, idx):
 
 
 def send(jf, lib, serial, log_text, progress=lambda n, total: None, cancel=lambda: False):
-    """Count the log's new plays on the music server. Returns {"new", "sent", "unmatched"}."""
+    """Count the log's plays that haven't been sent on the music server. Plays that matched no song are tried again
+    each time (the song may have been added since). Returns {"new", "sent", "unmatched"}; "new" counts only plays not
+    seen before."""
     st = load_state(serial)
-    done = set(st["sent"]) | set(st["unmatched"])
-    new = [p for p in parse(log_text) if key(p) not in done]
+    sent_keys, before = set(st["sent"]), set(st["unmatched"])
+    todo = [p for p in parse(log_text) if key(p) not in sent_keys]
     idx = index(lib)
-    sent = unmatched = 0
-    for n, p in enumerate(new, 1):
-        if cancel():
-            break
-        progress(n, len(new))
-        song = match(p, idx)
-        if not song:
-            st["unmatched"].append(key(p))
-            unmatched += 1
-            continue
-        when = datetime.datetime.fromtimestamp(p["ts"], datetime.timezone.utc)
-        last = jf.last_played(song["id"])
-        if when < CLOCK_OK:
-            when = last or datetime.datetime.now(datetime.timezone.utc)
-        elif last and when < last:
-            when = last
-        jf.mark_played(song["id"], when)
-        st["sent"].append(key(p))
-        sent += 1
-        if sent % 25 == 0:
-            save_state(serial, st)
-    save_state(serial, st)
-    return {"new": len(new), "sent": sent, "unmatched": unmatched}
+    sent, still, n = 0, [], 0
+    try:
+        for p in todo:
+            if cancel():
+                break
+            progress(n + 1, len(todo))
+            song = match(p, idx)
+            if not song:
+                still.append(key(p))
+                n += 1
+                continue
+            when = datetime.datetime.fromtimestamp(p["ts"], datetime.timezone.utc)
+            last = jf.last_played(song["id"])
+            if when < CLOCK_OK:
+                when = last or datetime.datetime.now(datetime.timezone.utc)
+            elif last and when < last:
+                when = last
+            jf.mark_played(song["id"], when)
+            st["sent"].append(key(p))
+            sent += 1
+            n += 1
+            if sent % 25 == 0:
+                save_state(serial, st)
+    finally:   # whatever was sent stays recorded, even when the server stops answering partway
+        st["unmatched"] = sorted(set(still) | {key(p) for p in todo[n:] if key(p) in before})
+        save_state(serial, st)
+    return {"new": len([p for p in todo if key(p) not in before]), "sent": sent, "unmatched": len(still)}
 
 
 def read_log():

@@ -1,0 +1,54 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: "3.12"
+            navidrome: linux_amd64
+            navidrome_sha256: fdd87fd107818667c2c50bc24dc6ce856962c795b3822a91f95c066cfad2c53e
+          - os: macos-15
+            python: "3.14"
+            navidrome: darwin_arm64
+            navidrome_sha256: 8b0a7798001453719ad50c12f7025a6044546c4a3568efe51feb296681f29956
+    runs-on: ${{ matrix.os }}
+    env:
+      NAVIDROME_VERSION: 0.64.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: ffmpeg
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -yq ffmpeg; else brew install ffmpeg; fi
+      - name: Navidrome (checked against its published checksum)
+        run: |
+          f="navidrome_${NAVIDROME_VERSION}_${{ matrix.navidrome }}.tar.gz"
+          curl -fsSLO "https://github.com/navidrome/navidrome/releases/download/v${NAVIDROME_VERSION}/$f"
+          echo "${{ matrix.navidrome_sha256 }}  $f" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/nd" && tar -xzf "$f" -C "$RUNNER_TEMP/nd" navidrome
+          echo "INNISYNC_NAVIDROME=$RUNNER_TEMP/nd/navidrome" >> "$GITHUB_ENV"
+      - name: Build the interface
+        working-directory: ui
+        run: npm ci --no-audit --no-fund && npx vite build
+      - name: Python packages
+        run: pip install -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q -rs

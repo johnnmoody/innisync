@@ -167,6 +167,7 @@ cd ui && npm install && npm run dev   # the interface, with the API proxied
 ```
 `INNISYNC_DATA=/some/folder` runs a separate copy with its own settings. `run.py --selftest` drives the real app
 window through every area and writes the results to `~/Library/Logs/InniSync.log`.
+Tests: `python -m pytest -q` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 - `innisync/` the server: library clients (`jellyfin.py`, `subsonic.py`), the Y1 over adb (`device.py`), sync
   (`sync.py`), sound analysis (`soundalike.py`), smart playlists, podcasts, play counts, lyrics, backups, updates,

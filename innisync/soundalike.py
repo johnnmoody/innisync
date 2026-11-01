@@ -8,6 +8,7 @@ import os
 import subprocess
 import threading
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -20,12 +21,16 @@ CLIP = 45  # seconds analyzed per song, from about a third of the way in (skips 
 VERSION = 1
 
 
+SOURCE = "http://127.0.0.1:8765/stream/{}?original=1"   # set by server.serve to its own port
+
+
 def _decode(jf, song):
-    """45 s of the song as mono float32, streamed straight from the music server (ffmpeg seeks with HTTP ranges)."""
+    """45 s of the song as mono float32, read through InniSync's own /stream proxy (ffmpeg seeks with HTTP ranges;
+    the proxy adds the sign-in, which never appears on ffmpeg's command line)."""
     start = max(0, min(song.get("duration", 0) * 0.33, song.get("duration", 0) - CLIP))
-    url, headers = jf.audio_source(song["id"])
-    p = subprocess.run([sync.FFMPEG, "-v", "error", *(["-headers", headers] if headers else []),
-                        "-ss", f"{start:.1f}", "-t", str(CLIP), "-i", url, "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"],
+    url = SOURCE.format(urllib.parse.quote(song["id"], safe=""))
+    p = subprocess.run([sync.FFMPEG, "-v", "error", "-ss", f"{start:.1f}", "-t", str(CLIP), "-i", url,
+                        "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"],
                        capture_output=True, timeout=180)
     if p.returncode != 0 or len(p.stdout) < SR * 4 * 5:
         raise RuntimeError((p.stderr or b"no audio").decode(errors="replace")[:200])
@@ -104,8 +109,9 @@ class Index:
     def __init__(self, feats, lib):
         self.ids = [i for i in feats if i in lib]
         self.lib = lib
-        if not self.ids:
-            self.X = np.zeros((0, 1))
+        self.pos = {i: n for n, i in enumerate(self.ids)}
+        if not self.ids:   # nothing analyzed yet: every lookup finds nothing
+            self.X, self.energy = np.zeros((0, 1)), np.zeros(0)
             return
         blocks = list(zip(*[_vector(feats[i]) for i in self.ids]))
         cols = []
@@ -116,7 +122,6 @@ class Index:
             cols.append(arr * w / np.sqrt(arr.shape[1]))  # each group weighs the same whatever its size
         X = np.hstack(cols)
         self.X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)
-        self.pos = {i: n for n, i in enumerate(self.ids)}
         # one "energy" number per song (loudness, attack, pace) for naming mixes Mellow / High-Energy
         z = lambda a: (a - a.mean()) / (a.std() + 1e-9)
         tempo = np.array([_vector(feats[i])[5][0][0] for i in self.ids])

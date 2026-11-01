@@ -232,17 +232,19 @@ class State:
         t, info = self.dev_cache
         if force or info is None or time.time() - t > 10:
             info = device.info()
-            self.dev_cache = (time.time(), info)
             serial = info.get("serial") if info.get("connected") else None
             if serial:
                 info["wifi_sync"] = wifi.enabled(serial)
             else:
                 wifi.reconnect()   # Y1s with Wi-Fi sync on come back on their own
-            if serial and serial != self.connected_serial:
+            with self.dev_lock:   # the UI and the menu bar both poll: only one of them may see the Y1 arrive
+                self.dev_cache = (time.time(), info)
+                arrived = serial and serial != self.connected_serial
+                self.connected_serial = serial
+                if serial:
+                    self.last_serial = serial
+            if arrived:
                 threading.Thread(target=self._on_connect, args=(info,), daemon=True).start()
-            self.connected_serial = serial
-            if serial:
-                self.last_serial = serial
         return info
 
     def _on_connect(self, info):
@@ -254,6 +256,8 @@ class State:
             self._auto_backup(info)
 
     def _auto_backup(self, info):
+        if self.busy():   # a sync started first (auto-sync on connect): back up next time
+            return
         self.auto = {"state": "running"}
         try:
             b = backup.auto_backup(info)
@@ -262,6 +266,7 @@ class State:
             self.auto = {"state": "error", "message": str(e)}
 
     connected_serial = None
+    dev_lock = threading.Lock()
     auto = {"state": "idle"}    # the backup made when the Y1 connects
 
     # ---- similar songs and mixes ----
@@ -274,6 +279,8 @@ class State:
             return "A sync is already running"
         if self.update and self.update.status["state"] in update.UpdateJob.ACTIVE:
             return "The Y1 is being updated"
+        if self.auto.get("state") == "running":
+            return "The Y1 is being backed up. Try again in a minute."
         return None
 
     def serial(self):
@@ -344,9 +351,8 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}") if n else {}
 
     def _static(self, path):
-        rel = os.path.normpath(path.lstrip("/") or "index.html")
-        full = os.path.join(WEB, rel)
-        if not full.startswith(WEB) or not os.path.isfile(full):
+        full = os.path.realpath(os.path.join(WEB, path.lstrip("/") or "index.html"))
+        if os.path.commonpath([full, os.path.realpath(WEB)]) != os.path.realpath(WEB) or not os.path.isfile(full):
             return self._json({"error": "not found"}, 404)
         data = open(full, "rb").read()
         self.send_response(200)
@@ -356,10 +362,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _proxy_stream(self, item_id):
-        """Relay audio from Jellyfin with the sign-in header; forwards Range so seeking works."""
+    def _proxy_stream(self, item_id, original=False):
+        """Relay audio from the music server with the sign-in; forwards Range so seeking works. `original` is the
+        untouched file (sound analysis); otherwise a format WebKit can play."""
         song = (S.lib or {}).get(item_id) or {}
-        req = S.jf.stream_request(item_id, song.get("container"), self.headers.get("Range"))
+        req = (S.jf.source_request(item_id, self.headers.get("Range")) if original
+               else S.jf.stream_request(item_id, song.get("container"), self.headers.get("Range")))
         try:
             r = urllib.request.urlopen(req, timeout=60)
         except urllib.error.HTTPError as e:
@@ -381,8 +389,37 @@ class Handler(BaseHTTPRequestHandler):
                 pass  # player seeked or stopped
         return None
 
+    # ---- who may talk to this server ----
+    # Any web page you visit can send requests to 127.0.0.1, so: the Host must be this server (stops DNS rebinding),
+    # API calls must carry the X-InniSync header (a page on another site can't add it without a CORS preflight, which
+    # this server never answers), and a page that sends an Origin must be InniSync's own. Covers, songs and Y1
+    # pictures load through <img>/<audio>, which can't send headers; they're read-only.
+    PUBLIC = ("/art/", "/stream/", "/devimg")
+
+    def _allowed(self, path):
+        host = (self.headers.get("Host") or "").lower()
+        port = self.server.server_address[1]
+        if host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+            return False
+        origin = self.headers.get("Origin")
+        if origin and origin.lower() not in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+            return False
+        if path.startswith("/api/") and self.headers.get("X-InniSync") != "1":
+            return False
+        return True
+
+    def _refuse(self):
+        body = b'{"error": "Not allowed"}'
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
+        if not self._allowed(u.path):
+            return self._refuse()
         qs = dict(urllib.parse.parse_qsl(u.query))
         try:
             if u.path == "/api/prefs":
@@ -443,7 +480,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not S.device_info().get("connected"):
                     return self._json({"error": "The Y1 isn't connected"}, 409)
                 c = device.contents()
-                man = device.read_manifest().get("songs", {})
+                man = manifest_or_empty().get("songs", {})
                 by_path = {v["path"]: k for k, v in man.items()}
                 lib = S.lib or {}
                 songs, ids = [], {}
@@ -524,8 +561,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(S.job.status if S.job else {"state": "idle"})
             if u.path.startswith("/art/"):
                 item = u.path.split("/")[2]
-                req = S.jf.image_request(item, int(qs.get("size", 300)))
-                try:
+                try:   # signed out, unknown item or server down: the placeholder, never a broken image
+                    req = S.jf.image_request(item, int(qs.get("size", 300)))
                     with urllib.request.urlopen(req, timeout=20) as r:
                         data = r.read()
                         ctype = r.headers.get("Content-Type", "image/jpeg")
@@ -539,10 +576,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
                 return None
             if u.path.startswith("/stream/"):
-                return self._proxy_stream(u.path.split("/")[2])
+                return self._proxy_stream(urllib.parse.unquote(u.path.split("/")[2]), qs.get("original") == "1")
             return self._static(u.path)
         except NotSignedIn as e:
             return self._json({"error": str(e), "signIn": True}, 401)
+        except device.ManifestError as e:
+            return self._json({"error": str(e), "code": "manifest"}, 409)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
 
@@ -554,6 +593,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
+        if not self._allowed(u.path) or u.path.startswith(self.PUBLIC):
+            return self._refuse()
         qs = dict(urllib.parse.parse_qsl(u.query))
         try:
             if u.path in ("/api/device/themes/upload", "/api/device/wallpaper", "/api/device/audiobooks/add"):
@@ -648,18 +689,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({k: v for k, v in p.items() if k not in ("want", "adds", "removes", "playlists")} |
                                   {"add_count": len(p["adds"]), "remove_count": len(p["removes"]),
                                    "playlist_count": len(p["playlists"])})
+            if u.path == "/api/sync/cancel":
+                if S.job:
+                    S.job.cancel = True
+                return self._json({"ok": True})
+            if not info.get("connected"):
+                return self._json({"error": "The Y1 isn't connected"}, 409)
             if u.path == "/api/device/sync":
                 if S.busy():
                     return self._json({"error": S.busy()}, 409)
                 lib = S.library()
+                allow_removals = bool(body.pop("allow_removals", False))   # the user confirmed a big removal
                 settings = sync.save_settings(info["serial"], body) if body else sync.load_settings(info["serial"])
                 settings = {**settings, "lrclib_url": load_prefs()["lrclib_url"]}
                 S.job = sync.SyncJob(S.jf, lib, settings, S.playlist_items, S.playlists, soundalike=S.playlists_for_device,
-                                     autoplay=S.autoplay_for_device).start()
-                return self._json({"ok": True})
-            if u.path == "/api/sync/cancel":
-                if S.job:
-                    S.job.cancel = True
+                                     autoplay=S.autoplay_for_device, allow_removals=allow_removals).start()
                 return self._json({"ok": True})
             if u.path == "/api/device/rename":
                 device.set_name(body.get("name", "").strip() or "My Y1")
@@ -671,8 +715,6 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/device/rescan":
                 device.rescan_library()
                 return self._json({"ok": True})
-            if not info.get("connected"):
-                return self._json({"error": "The Y1 isn't connected"}, 409)
             if u.path == "/api/device/player":
                 changes = {}
                 for k, v in (body.get("settings") or {}).items():
@@ -713,6 +755,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(podcasts.subscribe(body.get("url", "")))
             if u.path == "/api/device/podcasts/unsubscribe":
                 return self._json(podcasts.unsubscribe(body.get("url", ""), bool(body.get("removeEpisodes"))))
+            if u.path == "/api/device/manifest/rebuild":
+                if S.busy():
+                    return self._json({"error": S.busy()}, 409)
+                man, leftover = sync.rebuild_manifest(S.library())
+                device.write_manifest(man)
+                return self._json({"songs": len(man["songs"]), "playlists": len(man["playlists"]), "unmatched": leftover})
             if u.path == "/api/device/wifi":
                 if S.busy():
                     return self._json({"error": S.busy()}, 409)
@@ -740,8 +788,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "not found"}, 404)
         except NotSignedIn as e:
             return self._json({"error": str(e), "signIn": True}, 401)
+        except device.ManifestError as e:
+            return self._json({"error": str(e), "code": "manifest"}, 409)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
+
+
+def manifest_or_empty():
+    """The sync record for labels only (what InniSync put there): a damaged one just means no labels here. Sync and
+    rebuild read it strictly."""
+    try:
+        return device.read_manifest()
+    except device.ManifestError:
+        return json.loads(json.dumps(device.EMPTY_MANIFEST))
 
 
 def podcast_overview(force=False):
@@ -749,7 +808,7 @@ def podcast_overview(force=False):
     from concurrent.futures import ThreadPoolExecutor
     subs = podcasts.subscriptions()
     on_y1 = podcasts.downloaded()
-    mine = device.read_manifest().get("podcasts", {})
+    mine = manifest_or_empty().get("podcasts", {})
 
     def one(s):
         try:
@@ -812,6 +871,7 @@ Handler._upload = lambda self, path, qs: _upload_impl(self, path, qs)
 def serve(port=8765):
     backup.set_folder(load_prefs()["backup_folder"])
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    soundalike.SOURCE = f"http://127.0.0.1:{port}/stream/{{}}?original=1"
     def warm():
         try:
             S.library()

@@ -51,7 +51,7 @@ def check(installed, force=False):
     rel = latest_release(force)
     newer = bool(installed) and _ver(rel["version"]) > _ver(installed)
     next_check = time.strftime("%A, %B %-d", time.localtime(_cache["at"] + CHECK_EVERY))
-    if device.LAUNCHER == device.AUTOPLAY:
+    if installed and device.LAUNCHER == device.AUTOPLAY:
         # InniSync's own build: GitHub's APK is the plain player under another package, so it isn't installed over it
         msg = (f"Your Y1 runs InniClassic Autoplay {installed}, InniSync's build of the player. "
                + (f"InniClassic {rel['version']} is out: rebuild InniClassic Autoplay from it to update."
@@ -160,7 +160,7 @@ class UpdateJob:
         return self
 
     def _set(self, **kw):
-        self.status.update(kw)
+        self.status = {**self.status, **kw}   # a new dict, so the server never serializes one mid-change
 
     def _run(self):
         try:

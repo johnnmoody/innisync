@@ -96,8 +96,18 @@ def sign_out():
     save_config({"server": cfg.get("server", "")})
 
 
+def _when(s):
+    """A Subsonic date ("2026-10-31T07:00:00.123-05:00", or ending in Z) as an aware UTC datetime. Servers send
+    their local offset, so it can't just be cut off."""
+    if not s:
+        return None
+    d = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    return (d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)).astimezone(datetime.timezone.utc)
+
+
 def _iso(s):
-    return s[:19] + "Z" if s else None
+    d = _when(s)
+    return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else None
 
 
 class Subsonic:
@@ -196,7 +206,7 @@ class Subsonic:
     # ---- play counts -------------------------------------------------------
     def last_played(self, item_id):
         s = (self.call("getSong", id=item_id).get("song") or {}).get("played")
-        return datetime.datetime.fromisoformat(s[:19]).replace(tzinfo=datetime.timezone.utc) if s else None
+        return _when(s)
 
     def mark_played(self, item_id, when):
         """Count one play at that time (scrobble with submission=true adds to playCount and sets the play date)."""
@@ -215,6 +225,7 @@ class Subsonic:
     def image_request(self, item_id, size=300):
         return urllib.request.Request(self.url("getCoverArt", id=self.cover.get(item_id, item_id), size=size), headers=UA)
 
-    def audio_source(self, item_id):
-        """(url, extra ffmpeg headers) for reading the original audio (sound analysis)."""
-        return self.url("stream", id=item_id, format="raw"), "User-Agent: InniSync\r\n"
+    def source_request(self, item_id, range_header=None):
+        """Request for the original audio file (see Jellyfin.source_request)."""
+        hdrs = {"User-Agent": "InniSync", **({"Range": range_header} if range_header else {})}
+        return urllib.request.Request(self.url("stream", id=item_id, format="raw"), headers=hdrs)

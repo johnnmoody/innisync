@@ -2,8 +2,10 @@
 
 This Y1's firmware runs adbd as root with key checks off (ro.adb.secure unset), so open adb on the network would be a
 root shell for anyone on the LAN. So before TCP is switched on, an iptables chain on the Y1 drops port 5555 from
-everything except this Mac: its IPs, and its MAC addresses as the Y1 sees them (read from the Y1's own ARP table; macOS
-hides them from apps). IPv6 to the port is dropped outright.
+everything except this computer: the one address it uses to reach the Y1, and that address's MAC as the Y1 sees it
+(read from the Y1's own ARP table; macOS hides it from apps). IPv6 to the port is dropped outright. The chain is always
+built complete (ending in DROP) under a new name and only then swapped in, so a command lost on the way can't leave the
+port open.
 
 Android 4.2.2's adbd (system/core/adb/adb.c) listens on USB and, when service.adb.tcp.port is set, on TCP as well;
 `setprop ctl.restart adbd` has init restart it. Neither the property nor the firewall survives a reboot, so rebooting
@@ -27,6 +29,7 @@ from . import device, sync
 
 PORT = 5555
 CHAIN = "innisync_adb"
+NEW_CHAIN = CHAIN + "_new"
 STATE = os.path.join(sync.APP_DIR, "wifi.json")   # serial -> {"ip": last Wi-Fi address}
 
 
@@ -68,29 +71,55 @@ def _macs_seen_by_y1(ips):
     return sorted(macs)
 
 
-def lock(ips=None):
-    """(Re)write the firewall on the Y1: port 5555 only from this Mac. Returns what it allowed."""
-    ips = ips or mac_ips()
+def facing_ip(y1_ip):
+    """The address this computer uses to reach the Y1 (a UDP connect picks the route; nothing is sent)."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect((y1_ip, PORT))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+
+def _chain_drops(chain):
+    """Whether the chain's last rule is the DROP (so everything not allowed above it is refused)."""
+    lines = device.shell(f"iptables -S {chain} 2>/dev/null || iptables -L {chain} -n").strip().splitlines()
+    return bool(lines) and "DROP" in lines[-1]
+
+
+def lock(y1_ip):
+    """(Re)write the firewall on the Y1: port 5555 only from the address this computer reaches `y1_ip` from.
+    The new rules go into a fresh chain ending in DROP, which is checked and only then put in front of the port;
+    until that moment the old chain (or, the first time, adbd not listening on TCP) still guards it."""
+    ips = [facing_ip(y1_ip)]
     macs = _macs_seen_by_y1(ips)
-    rules = [f"iptables -N {CHAIN} 2>/dev/null", f"iptables -F {CHAIN}", f"iptables -A {CHAIN} -i lo -j ACCEPT"]
-    rules += [f"iptables -A {CHAIN} -s {ip} -j ACCEPT" for ip in ips]
-    rules += [f"iptables -A {CHAIN} -m mac --mac-source {m} -j ACCEPT" for m in macs]
-    rules += [f"iptables -A {CHAIN} -j DROP",
-              f"iptables -D INPUT -p tcp --dport {PORT} -j {CHAIN} 2>/dev/null",
-              f"iptables -I INPUT 1 -p tcp --dport {PORT} -j {CHAIN}",
-              f"ip6tables -D INPUT -p tcp --dport {PORT} -j DROP 2>/dev/null",
-              f"ip6tables -I INPUT 1 -p tcp --dport {PORT} -j DROP"]
-    for i in range(0, len(rules), 6):   # the Y1's adb refuses long lines
-        device.shell("; ".join(rules[i:i + 6]))
-    check = device.shell(f"iptables -S {CHAIN} 2>/dev/null || iptables -L {CHAIN} -n")
-    if "DROP" not in check:
-        raise device.DeviceError("The Y1's firewall rules didn't take, so Wi-Fi sync stays off")
+    rules = [f"iptables -N {NEW_CHAIN} 2>/dev/null; true", f"iptables -F {NEW_CHAIN}",
+             f"iptables -A {NEW_CHAIN} -i lo -j ACCEPT"]
+    rules += [f"iptables -A {NEW_CHAIN} -s {ip} -j ACCEPT" for ip in ips]
+    rules += [f"iptables -A {NEW_CHAIN} -m mac --mac-source {m} -j ACCEPT" for m in macs]
+    rules += [f"iptables -A {NEW_CHAIN} -j DROP"]
+    for r in rules:
+        device.shell_ok(r)
+    if not _chain_drops(NEW_CHAIN):
+        raise device.DeviceError("The Y1's firewall rules didn't take, so Wi-Fi sync stays as it was")
+    # swap: the new chain goes in front of the port first, then the old one is taken out and the new one renamed
+    device.shell_ok(f"iptables -I INPUT 1 -p tcp --dport {PORT} -j {NEW_CHAIN}")
+    device.shell(f"while iptables -D INPUT -p tcp --dport {PORT} -j {CHAIN} 2>/dev/null; do :; done; "
+                 f"iptables -F {CHAIN} 2>/dev/null; iptables -X {CHAIN} 2>/dev/null; true")
+    device.shell_ok(f"iptables -E {NEW_CHAIN} {CHAIN}")
+    device.shell_ok(f"while ip6tables -D INPUT -p tcp --dport {PORT} -j DROP 2>/dev/null; do :; done; "
+                    f"ip6tables -I INPUT 1 -p tcp --dport {PORT} -j DROP")
+    if not _chain_drops(CHAIN):
+        raise device.DeviceError("The Y1's firewall rules didn't take, so Wi-Fi sync stays as it was")
     return {"ips": ips, "macs": macs}
 
 
 def unlock():
-    device.shell(f"iptables -D INPUT -p tcp --dport {PORT} -j {CHAIN} 2>/dev/null; iptables -F {CHAIN} 2>/dev/null; "
-                 f"iptables -X {CHAIN} 2>/dev/null; ip6tables -D INPUT -p tcp --dport {PORT} -j DROP 2>/dev/null; true")
+    for c in (CHAIN, NEW_CHAIN):
+        device.shell(f"while iptables -D INPUT -p tcp --dport {PORT} -j {c} 2>/dev/null; do :; done; "
+                     f"iptables -F {c} 2>/dev/null; iptables -X {c} 2>/dev/null; true")
+    device.shell(f"while ip6tables -D INPUT -p tcp --dport {PORT} -j DROP 2>/dev/null; do :; done; true")
 
 
 def listening():
@@ -111,7 +140,7 @@ def enable(serial):
                 break
         if not up:
             raise device.DeviceError("The Y1 didn't join a Wi-Fi network. Join one on the Y1, then try again.")
-    allowed = lock()                       # firewall first: TCP never opens unguarded
+    allowed = lock(ip)                     # firewall first: TCP never opens unguarded
     _restart_adbd(PORT)
     st = _load()
     st[serial] = {"ip": ip}
@@ -167,9 +196,9 @@ def refresh(serial):
     """On every connection: keep the allow-list current and remember the Y1's address (DHCP can move it)."""
     if not enabled(serial) or not listening():
         return
-    lock()
     ip, up = y1_wifi()
     if up:
+        lock(ip)
         st = _load()
         st[serial] = {"ip": ip}
         _save(st)

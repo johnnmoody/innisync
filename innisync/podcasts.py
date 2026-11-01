@@ -31,8 +31,24 @@ def safe(name):
     return re.sub(r'[\\/:*?"<>|]', "_", name)
 
 
+def channel_folder(name):
+    """Podcasts/<channel> on the Y1, or None when the name can't be a folder of its own ("", ".", "..", control
+    characters) - such a path would point at Podcasts itself or above it, and unsubscribing deletes the folder."""
+    d = safe(name)
+    if not d.strip() or not d.strip(".") or re.search(r"[\x00-\x1f\x7f]", d):
+        return None
+    return f"{ROOT}/{d}"
+
+
 def episode_path(channel, title):
-    return f"{ROOT}/{safe(channel)}/{safe(title)}.mp3"
+    folder = channel_folder(channel)
+    return f"{folder}/{safe(title)}.mp3" if folder else None
+
+
+def channel_name(title):
+    """A feed's <title> as a channel name: one line, no "|" (the subscriptions file's separator), usable as a folder."""
+    name = re.sub(r"[\x00-\x1f\x7f]+", " ", title or "").replace("|", "/").strip()
+    return name if channel_folder(name) else "Podcast"
 
 
 def subscriptions():
@@ -50,7 +66,7 @@ def subscriptions():
 
 def _write_subscriptions(subs):
     import tempfile
-    body = HEADER + "".join(f"{s['name'].replace('|', '/')}|{s['url']}\n" for s in subs)
+    body = HEADER + "".join(f"{channel_name(s['name'])}|{s['url'].strip()}\n" for s in subs)
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
         f.write(body)
         tmp = f.name
@@ -70,7 +86,7 @@ def subscribe(url):
     if any(s["url"] == url for s in subs):
         raise device.DeviceError("Your Y1 is already subscribed to that podcast")
     feed = fetch(url, force=True)
-    name = feed["title"].strip() or "Podcast"
+    name = channel_name(feed["title"])
     if any(s["name"] == name for s in subs):
         name = f"{name} ({len(subs) + 1})"   # the channel name is also the folder name, so it must be unique
     subs.append({"name": name, "url": url})
@@ -84,8 +100,9 @@ def unsubscribe(url, remove_episodes):
     if not sub:
         raise device.DeviceError("That podcast isn't on the Y1")
     _write_subscriptions([s for s in subs if s["url"] != url])
-    if remove_episodes:
-        device.shell(f"rm -rf {device.q(ROOT + '/' + safe(sub['name']))}")
+    folder = channel_folder(sub["name"])
+    if remove_episodes and folder:
+        device.shell(f"rm -rf {device.q(folder)}")
     return sub
 
 
@@ -139,6 +156,8 @@ def wanted(settings, subs, feeds):
             picks = feed["episodes"] if n is None else feed["episodes"][:n]
         extra = set(p.get("extra", []))
         picks = picks + [e for e in feed["episodes"] if e["url"] in extra and e not in picks]
+        if not channel_folder(s["name"]):
+            continue
         for e in picks:
             out.setdefault(episode_path(s["name"], e["title"]), (s, e))
     return out

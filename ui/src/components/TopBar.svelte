@@ -3,7 +3,8 @@
   // The round artwork with a ring tracing progress is InniSync's motif: the click wheel.
   import Icon from "./Icon.svelte";
   import Wheel from "./Wheel.svelte";
-  import { st, togglePlay, previous, step, seek, setVolume, syncing, UPDATE_ACTIVE, visibleSongs, clearFilters } from "../lib/store.svelte.js";
+  import { st, togglePlay, previous, step, seek, setVolume, syncing, UPDATE_ACTIVE, visibleSongs, clearFilters, rebuildRecord, dismissSync, syncAllowingRemovals } from "../lib/store.svelte.js";
+  import { notice, confirm } from "../lib/dialogs.svelte.js";
   import { api, art } from "../lib/api.js";
   import { fmtTime } from "../lib/format.js";
 
@@ -25,6 +26,14 @@
   const libraryView = $derived(!["device", "mixes"].includes(st.view));
   const frac = $derived(st.duration ? st.time / st.duration : 0);
   const R = 21, C = 2 * Math.PI * R;
+  const showProblems = () => notice(`${job.errors.length} problem${job.errors.length === 1 ? "" : "s"} in the last sync`,
+    job.errors.join("\n") + "\n\nSongs that didn't copy are tried again next sync. Anything already on the Y1 was kept.");
+  async function removeAndSync() {
+    const ok = await confirm(`Remove ${job.removing.toLocaleString()} songs from the Y1?`,
+      "Check that your library looks complete first: if the music server was offline or rescanning, this sync would take those songs off.",
+      "Remove and Sync", true);
+    if (ok) syncAllowingRemovals().catch((e) => notice("The sync didn't start", e.message));
+  }
   function setMode(m) { if (st.mode !== m) clearFilters(); st.mode = m; }
 </script>
 
@@ -42,6 +51,10 @@
       <div class="job">
         <div class="lines"><div class="title">{jobTitle}</div><div class="sub muted">{jobSub}</div></div>
         <div class="meter" role="progressbar" aria-label={jobTitle} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(jobPct)}><div style:width="{jobPct}%"></div></div>
+        {#if job.state === "error" && job.code === "manifest"}<button class="fix" onclick={() => rebuildRecord().catch((e) => notice("The record wasn't rebuilt", e.message))}>Rebuild Record</button>{/if}
+        {#if job.state === "error" && job.code === "removals"}<button class="fix" onclick={removeAndSync}>Remove and Sync</button>{/if}
+        {#if !jobActive && job.kind === "sync" && job.errors?.length}<button class="fix" onclick={showProblems}>Show Problems</button>{/if}
+        {#if !jobActive && job.kind === "sync"}<button class="quiet x" aria-label="Dismiss" title="Dismiss" onclick={dismissSync}><Icon name="close" size={13} /></button>{/if}
         {#if jobActive && job.kind === "sync"}<button class="quiet x" aria-label="Cancel sync" title="Cancel sync" onclick={() => api("/api/sync/cancel", {})}><Icon name="close" size={13} /></button>{/if}
       </div>
     {:else if song}
@@ -99,6 +112,7 @@
   .meter { width: 120px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; flex: none; }
   .meter div { height: 100%; background: var(--accent); }
   .x { padding: 4px 6px; min-height: 24px; }
+  .fix { flex: none; min-height: 26px; padding: 2px 10px; font-size: 12px; }
   .idle { display: flex; align-items: center; gap: 8px; margin: 0 auto; font-weight: 600; }
   .right { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
   .seg { display: flex; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }

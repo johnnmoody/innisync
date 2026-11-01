@@ -19,6 +19,7 @@ from PyObjCTools import AppHelper
 
 ICON = os.path.join(os.path.dirname(__file__), "web", "img", "logo_lcd.png")
 POLL = 3
+HEADERS = {"X-InniSync": "1"}   # the local server only answers API calls that carry it
 
 
 def notify(title, text):
@@ -66,13 +67,13 @@ class _Controller(NSObject):
     # ---- talking to the InniSync server (background thread) ----
     @objc.python_method
     def _get(self, path):
-        with urllib.request.urlopen(self.base + path, timeout=20) as r:
+        with urllib.request.urlopen(urllib.request.Request(self.base + path, headers=HEADERS), timeout=20) as r:
             return json.load(r)
 
     @objc.python_method
     def _post(self, path, body=None):
         req = urllib.request.Request(self.base + path, data=json.dumps(body or {}).encode(), method="POST",
-                                     headers={"Content-Type": "application/json"})
+                                     headers={**HEADERS, "Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
                 return json.load(r)

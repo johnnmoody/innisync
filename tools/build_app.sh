@@ -6,7 +6,7 @@ SRC="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${INNISYNC_APP:-/Applications/InniSync.app}"
 VENV="$HOME/.venvs/innisync"
 
-[ -x "$VENV/bin/python" ] || { python3 -m venv "$VENV"; "$VENV/bin/pip" -q install pywebview numpy scipy librosa pillow; }
+[ -x "$VENV/bin/python" ] || { python3 -m venv "$VENV"; "$VENV/bin/pip" -q install -r "$SRC/requirements-dev.txt"; }
 
 ( cd "$SRC/ui" && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npx vite build --logLevel warn )
 

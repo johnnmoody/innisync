@@ -1,0 +1,38 @@
+name: Something isn't working
+description: InniSync did the wrong thing, showed an error, or stopped.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead. Paste any error text exactly.
+    validations:
+      required: true
+  - type: dropdown
+    id: server
+    attributes:
+      label: Music server
+      options: [Jellyfin, Navidrome, Other Subsonic server, Not signed in]
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Y1 firmware and player
+      description: For example "InniClassic 1.4.5" or "InniClassic Autoplay 1.4.5-autoplay1". Shown on the Y1's Summary tab.
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      options: [USB, Wi-Fi, Not connected]
+  - type: input
+    id: version
+    attributes:
+      label: InniSync version or commit
+      description: InniSync > About InniSync, or `git rev-parse --short HEAD`.
+  - type: input
+    id: os
+    attributes:
+      label: Computer
+      description: For example "macOS 27.2, Apple silicon".

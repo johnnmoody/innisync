@@ -75,7 +75,7 @@
         {@const c = t.colors || {}}
         {@const cur = t.name === themes.current}
         <div class="tcard" class:cur>
-          <div class="mock" style:background={t.bg ? `center/cover url('${devImg(t.bg)}')` : "linear-gradient(#3a3d44,#15161a)"} aria-hidden="true">
+          <div class="mock" style:background={t.bg ? `center/cover url(${JSON.stringify(devImg(t.bg))})` : "linear-gradient(#3a3d44,#15161a)"} aria-hidden="true">
             <div class="mbar" style:background={argb(c.statusBarBg, "rgba(0,0,0,.35)")} style:color={argb(c.textPrimary, "#fff")}>{st.device.name}</div>
             <div class="mlist" style:background={argb(c.bgOverlay, "rgba(0,0,0,.55)")}>
               {#each ["Now Playing", "Music", "Videos", "Playlists", "Settings"] as r, i}

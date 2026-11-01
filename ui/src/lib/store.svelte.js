@@ -231,10 +231,27 @@ export async function pollSync(background) {
   if (s.state !== "idle") {
     refreshDevice(true);
     setTimeout(() => { st.dev = null; if (st.devOpen) loadDeviceContents(); }, 20000);
-    syncClear = setTimeout(() => (st.sync = { state: "idle" }), 8000);
+    // a clean finish fades; problems and stops stay until dismissed, so they can be read and fixed
+    if (s.state === "done" && !s.errors?.length) syncClear = setTimeout(() => (st.sync = { state: "idle" }), 8000);
   }
 }
 export const syncing = () => SYNC_ACTIVE.includes(st.sync.state);
+export const dismissSync = () => { clearTimeout(syncClear); st.sync = { state: "idle" }; };
+
+// the fix for a sync that stopped because it would take most songs off: the user says it's meant
+export async function syncAllowingRemovals() {
+  await api("/api/device/sync", { allow_removals: true });
+  pollSync();
+}
+
+// the fix for a damaged sync record: rebuild it from the files on the Y1, then say what was found
+export async function rebuildRecord() {
+  const r = await api("/api/device/manifest/rebuild", {});
+  st.sync = { state: "idle" };
+  st.status = `Rebuilt the Y1's record: ${r.songs} songs and ${r.playlists} playlists found` +
+    (r.unmatched ? `, ${r.unmatched} other files left alone.` : ".");
+  return r;
+}
 
 let updTimer;
 export async function pollUpdate(background) {

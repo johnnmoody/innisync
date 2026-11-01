@@ -74,7 +74,10 @@ def create(info, reason="manual"):
         with open(os.path.join(tmp, "info.json"), "w") as f:
             json.dump(meta, f, indent=2)
         # copied under a .partial name first, so a backup cut short never shows up in the list
-        dest = os.path.join(root, name)
+        dest, n = os.path.join(root, name), 1
+        while os.path.exists(dest) or os.path.exists(dest + ".partial"):   # two backups in the same second
+            n += 1
+            dest = os.path.join(root, f"{name}-{n}")
         shutil.copytree(tmp, dest + ".partial")
         os.rename(dest + ".partial", dest)
     return _summary(dest)
@@ -155,9 +158,9 @@ def _restore_prefs(local):
     tmp, dest = "/data/local/tmp/innisync_restore_prefs", device.PREFS_DIR
     device.push_folder(local, tmp)
     # cat into place (no cp in this toolbox), then give each file back to the app
-    device.shell(f'mkdir -p {dest} && chown {uid}:{gid} {dest} && chmod 771 {dest} && '
-                 f'for f in {tmp}/*; do n="${{f##*/}}"; cat "$f" > "{dest}/$n" && chown {uid}:{gid} "{dest}/$n" && '
-                 f'chmod 660 "{dest}/$n"; done; rm -rf {tmp}')
+    device.shell_ok(f'rc=0; mkdir -p {dest} && chown {uid}:{gid} {dest} && chmod 771 {dest} || rc=1; '
+                    f'for f in {tmp}/*; do n="${{f##*/}}"; {{ cat "$f" > "{dest}/$n" && chown {uid}:{gid} "{dest}/$n" && '
+                    f'chmod 660 "{dest}/$n"; }} || rc=1; done; rm -rf {tmp}; [ $rc = 0 ]')
 
 
 def _restore_playlists(local):
@@ -167,4 +170,4 @@ def _restore_playlists(local):
         device.push_folder(local, tmp)
     else:
         device.shell(f"rm -rf {device.q(tmp)}; mkdir -p {device.q(tmp)}")
-    device.shell(f"rm -rf {device.q(device.PLAYLIST_DIR)} && mv {device.q(tmp)} {device.q(device.PLAYLIST_DIR)}")
+    device.shell_ok(f"rm -rf {device.q(device.PLAYLIST_DIR)} && mv {device.q(tmp)} {device.q(device.PLAYLIST_DIR)}")

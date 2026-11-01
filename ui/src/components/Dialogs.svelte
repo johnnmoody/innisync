@@ -25,7 +25,7 @@
 {/if}
 
 <style>
-  .msg { margin: 0 0 10px; color: var(--text-2); white-space: pre-line; }
+  .msg { margin: 0 0 10px; color: var(--text-2); white-space: pre-line; max-height: 50vh; overflow-y: auto; }
   input { width: 100%; }
   .danger { background: var(--danger); border-color: var(--danger); color: var(--surface); }
 </style>

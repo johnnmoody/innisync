@@ -1,4 +1,5 @@
 """iTunes-style one-way sync: Jellyfin selection -> Y1 (Music/InniSync + Y1_Playlists/*.m3u8)."""
+import hashlib
 import json
 import os
 import random
@@ -84,6 +85,40 @@ def device_path(song, convert):
     return f"{SYNC_DIR}/{artist}/{album}/{num}{title}.{target_ext(song, convert)}"
 
 
+def rebuild_manifest(lib):
+    """A new sync record from what's actually on the Y1, for when the old one is damaged: each library song whose file
+    is where InniSync would have put it (as-is or converted) is claimed, with its lyrics. Anything else is left alone.
+    Returns (manifest, number of files under Music/InniSync that matched no song)."""
+    files, cur = {}, SYNC_DIR
+    for line in device.shell(f"ls -lR {device.q(SYNC_DIR)} 2>/dev/null", timeout=120).splitlines():
+        line = line.rstrip()
+        if line.endswith(":") and line.startswith("/"):
+            cur = line[:-1]
+            continue
+        m = re.match(r"-\S+\s+\S+\s+\S+\s+(\d+)\s+\S+\s+\S+\s+(.+)$", line)
+        if m and not m.group(2).startswith("."):
+            # the card ignores case ("Lady GaGa" and "Lady Gaga" are one folder), so match the same way
+            files[f"{cur}/{m.group(2)}".casefold()] = int(m.group(1))
+    songs, claimed = {}, set()
+    for i, s in lib.items():
+        for conv in (False, True):
+            path = device_path(s, conv)
+            key = path.casefold()
+            if key in files and key not in claimed:
+                entry = {"path": path, "size": files[key]}   # recorded as sync names it, so the next plan matches
+                lrc = os.path.splitext(path)[0] + ".lrc"
+                if lrc.casefold() in files:
+                    entry["lrc"] = lrc
+                    claimed.add(lrc.casefold())
+                songs[i] = entry
+                claimed.add(key)
+                break
+    lists = [n.strip() for n in device.shell(f"ls {device.q(PLAYLIST_DIR)} 2>/dev/null").splitlines()
+             if n.strip().startswith(PLAYLIST_PREFIX)]
+    leftover = sum(1 for p in files if p not in claimed and not p.endswith(".lrc"))   # keys are casefolded
+    return {"songs": songs, "playlists": lists, "podcasts": {}}, leftover
+
+
 def est_size(song, convert):
     if target_ext(song, convert) == "mp3" and song["container"] != "mp3":
         return int(song["duration"] * MP3_320_BYTES_PER_SEC)
@@ -113,21 +148,54 @@ def selected_songs(lib, settings, playlist_items):
     return ids
 
 
+def _alt_path(path, song_id):
+    """The name a song gets when another wanted song already has its path: the same name plus a short tag of its id."""
+    base, ext = os.path.splitext(path)
+    return f"{base} ({hashlib.sha1(song_id.encode()).hexdigest()[:6]}){ext}"
+
+
+def resolve_paths(ids, lib, convert, have):
+    """{id: device path} for songs going on the Y1, no two of them the same file. The card ignores case, so two
+    untagged "Intro"s by one artist would share a path: one would overwrite the other and removing either would delete
+    both. A song already on the Y1 keeps its file when that is still one of its names, so names stay put between
+    syncs; otherwise the first song (in `ids` order) gets the plain name and the others the tagged one."""
+    plain = {i: device_path(lib[i], convert) for i in ids}
+    out, taken = {}, set()
+    for i in ids:
+        cur = have.get(i, {}).get("path")
+        if cur and cur.casefold() in (plain[i].casefold(), _alt_path(plain[i], i).casefold()) and cur.casefold() not in taken:
+            out[i] = cur
+            taken.add(cur.casefold())
+    for i in ids:
+        if i not in out:
+            path = plain[i] if plain[i].casefold() not in taken else _alt_path(plain[i], i)
+            out[i] = path
+            taken.add(path.casefold())
+    return out
+
+
 def plan(lib, settings, playlist_items, playlists, dev_info, manifest):
-    want = selected_songs(lib, settings, playlist_items)
+    """What a sync would do. `adds` are copied (new songs, and songs whose file name changes, e.g. when converting);
+    `removes` are songs no longer wanted at all; `replaces` are songs in `adds` whose old file is deleted only after
+    the new one is safely on the Y1."""
     conv = settings["convert"]
     have = manifest.get("songs", {})
-    want_paths = {i: device_path(lib[i], conv) for i in want}
-    adds = [i for i in want if have.get(i, {}).get("path") != want_paths[i]]
-    removes = [i for i in have if i not in want_paths or have[i].get("path") != want_paths.get(i)]
-    add_bytes = sum(est_size(lib[i], conv) for i in adds)
-    remove_bytes = sum(have[i].get("size", 0) for i in removes)
-    budget = dev_info.get("free", 0) - RESERVE + remove_bytes
-    fill = []
+    want = sorted(selected_songs(lib, settings, playlist_items))
+    want_paths = resolve_paths(want, lib, conv, have)
+
+    def diff():
+        adds = [i for i in want_paths if have.get(i, {}).get("path") != want_paths[i]]
+        removes = [i for i in have if i not in want_paths]
+        replaces = [i for i in adds if have.get(i, {}).get("path")]
+        return adds, removes, replaces
+    adds, removes, replaces = diff()
+    freed = lambda: sum(have[i].get("size", 0) for i in removes + replaces)
+    budget = dev_info.get("free", 0) - RESERVE + freed()
     if settings["fill_free"] and settings["sync_music"] and settings["mode"] == "selected":
-        room = budget - add_bytes
-        pool = [i for i in lib if i not in want_paths]
+        room = budget - sum(est_size(lib[i], conv) for i in adds)
+        pool = sorted(i for i in lib if i not in want_paths)
         random.Random(dev_info.get("serial", "y1")).shuffle(pool)
+        fill = []
         for i in pool:
             sz = est_size(lib[i], conv)
             if sz <= room:
@@ -135,11 +203,10 @@ def plan(lib, settings, playlist_items, playlists, dev_info, manifest):
                 room -= sz
             if room < 50 << 20:
                 break
-        for i in fill:
-            want_paths[i] = device_path(lib[i], conv)
-        adds += [i for i in fill if have.get(i, {}).get("path") != want_paths[i]]
-        removes = [i for i in removes if i not in want_paths]
-        add_bytes = sum(est_size(lib[i], conv) for i in adds)
+        want_paths = resolve_paths(want + fill, lib, conv, have)
+        adds, removes, replaces = diff()
+        budget = dev_info.get("free", 0) - RESERVE + freed()
+    add_bytes = sum(est_size(lib[i], conv) for i in adds)
     sel_pl = [p for p in playlists if p["id"] in settings["playlists"]] if settings["sync_music"] else []
     if settings["sync_music"] and settings["mode"] == "all":
         sel_pl = playlists
@@ -147,21 +214,30 @@ def plan(lib, settings, playlist_items, playlists, dev_info, manifest):
         "want": want_paths,
         "adds": adds,
         "removes": removes,
+        "replaces": replaces,
         "add_bytes": add_bytes,
-        "remove_bytes": remove_bytes,
+        "remove_bytes": freed(),
         "fits": add_bytes <= budget,
         "budget": budget,
         "playlists": sel_pl,
         "songs_after": len(want_paths),
-        "bytes_after": dev_info.get("synced", 0) + add_bytes - remove_bytes,
+        "bytes_after": dev_info.get("synced", 0) + add_bytes - freed(),
+        "big_removal": big_removal(len(removes), len(have)),
     }
+
+
+def big_removal(removing, on_y1):
+    """A sync that would take most of the Y1's songs off is more likely a library that came back empty or cut short
+    (server offline, rescanning, switched) than a real choice, so it waits for the user to confirm."""
+    return removing >= 25 and removing > on_y1 / 2
 
 
 class SyncJob:
     """Runs one sync in a background thread; .status is polled by the UI."""
 
-    def __init__(self, jf, lib, settings, playlist_items, playlists, soundalike=None, autoplay=None):
+    def __init__(self, jf, lib, settings, playlist_items, playlists, soundalike=None, autoplay=None, allow_removals=False):
         self.jf, self.lib, self.settings = jf, lib, settings
+        self.allow_removals = allow_removals  # the user confirmed a sync that takes most songs off (see big_removal)
         self.playlist_items, self.playlists = playlist_items, playlists
         self.soundalike = soundalike  # callable(ids on the Y1) -> [{"name", "items", "kind"}] sound-alike playlists
         self.autoplay = autoplay  # callable(ids on the Y1) -> {id: [closest ids on the Y1]} for Autoplay
@@ -174,7 +250,10 @@ class SyncJob:
         return self
 
     def _set(self, **kw):
-        self.status.update(kw)
+        self.status = {**self.status, **kw}   # a new dict, so the server never serializes one mid-change
+
+    def _error(self, msg):
+        self._set(errors=self.status["errors"] + [msg])
 
     def _send_play_counts(self, serial):
         try:
@@ -183,7 +262,7 @@ class SyncJob:
                                 cancel=lambda: self.cancel)
             self._set(plays=r)
         except Exception as e:
-            self.status["errors"].append(f"Play counts: {e}")
+            self._error(f"Play counts: {e}")
 
     def _fetch(self, song, dest_ext, workdir):
         src = os.path.join(workdir, "src." + (song["container"] or "bin"))
@@ -216,18 +295,33 @@ class SyncJob:
             p = plan(self.lib, self.settings, self.playlist_items, self.playlists, info, man)
             if not p["fits"]:
                 raise device.DeviceError("Not enough free space on the Y1 for this selection")
+            if p["big_removal"] and not self.allow_removals:
+                return self._set(state="error", code="removals", removing=len(p["removes"]),
+                                 message=f"This sync would take {len(p['removes']):,} of the "
+                                         f"{len(man.get('songs', {})):,} songs off the Y1, so nothing was changed.")
             conv = self.settings["convert"]
             adds = p["adds"]
-            total = len(p["removes"]) + len(adds)
-            self._set(total=total, state="syncing")
+            self._set(total=len(p["removes"]) + len(adds), state="syncing")
             songs = man.setdefault("songs", {})
+
+            def files_of(i):
+                return [f for f in (songs.get(i, {}).get("path"), songs.get(i, {}).get("lrc")) if f]
+
+            def delete_unclaimed(paths):
+                """Delete files no song still on the Y1 or being copied claims (a renamed song can take an old name)."""
+                claimed = {f.casefold() for i, s in songs.items() for f in (s.get("path"), s.get("lrc")) if f}
+                claimed |= {path.casefold() for path in p["want"].values()}
+                doomed = [f for f in paths if f.casefold() not in claimed]
+                if doomed:
+                    device.remove(doomed)
 
             if p["removes"]:
                 self._set(message="Removing songs")
-                device.remove([f for i in p["removes"] for f in (songs.get(i, {}).get("path"), songs.get(i, {}).get("lrc")) if f])
+                gone = [f for i in p["removes"] for f in files_of(i)]
                 for i in p["removes"]:
                     songs.pop(i, None)
-                self.status["done"] += len(p["removes"])
+                delete_unclaimed(gone)
+                self._set(done=self.status["done"] + len(p["removes"]))
                 device.write_manifest(man)
 
             device.mkdirs(sorted({os.path.dirname(p["want"][i]) for i in adds}) + [PLAYLIST_DIR])
@@ -240,13 +334,16 @@ class SyncJob:
                     self._set(message=f"Copying {n} of {len(adds)}", current=f"{s['name']} — {s['artist']}")
                     try:
                         local = self._fetch(s, target_ext(s, conv), work)
-                        device.push(local, p["want"][i])
+                        device.push_whole(local, p["want"][i])
+                        old = files_of(i)
                         songs[i] = {"path": p["want"][i], "size": os.path.getsize(local)}
                         for f in os.listdir(work):
                             os.unlink(os.path.join(work, f))
-                    except Exception as e:  # keep going; report at the end
-                        self.status["errors"].append(f"{s['artist']} - {s['name']}: {e}")
-                    self.status["done"] += 1
+                        if old:   # the new file is on the Y1: now the old one can go
+                            delete_unclaimed(old)
+                    except Exception as e:  # keep going; the old file (if any) stays, and it's reported at the end
+                        self._error(f"{s['artist']} - {s['name']}: {e}")
+                    self._set(done=self.status["done"] + 1)
                     if time.time() - last_save > 30:
                         device.write_manifest(man)
                         last_save = time.time()
@@ -264,8 +361,13 @@ class SyncJob:
             self._write_autoplay(man)
             self._set(message="Updating the Y1's library")
             device.rescan_library()
+            errs = len(self.status["errors"])
             self._set(state="cancelled" if self.cancel else "done",
-                      message="Sync cancelled" if self.cancel else "Y1 sync is complete. OK to disconnect.")
+                      message="Sync cancelled" if self.cancel else
+                      f"Synced, with {errs} problem{'s' if errs != 1 else ''}. OK to disconnect." if errs else
+                      "Y1 sync is complete. OK to disconnect.")
+        except device.ManifestError as e:
+            self._set(state="error", message=str(e), code="manifest")
         except Exception as e:
             self._set(state="error", message=str(e))
 
@@ -276,7 +378,7 @@ class SyncJob:
         try:
             subs = podcasts.subscriptions()
         except Exception as e:
-            self.status["errors"].append(f"Podcasts: {e}")
+            self._error(f"Podcasts: {e}")
             return
         feeds = {}
         for s in subs if (self.settings.get("podcasts") or {}).get("sync") else []:
@@ -284,10 +386,10 @@ class SyncJob:
             try:
                 feeds[s["url"]] = podcasts.fetch(s["url"])
             except Exception as e:
-                self.status["errors"].append(f"Podcast {s['name']}: {e}")
+                self._error(f"Podcast {s['name']}: {e}")
         want = podcasts.wanted(self.settings, subs, feeds)
         sync_on = bool((self.settings.get("podcasts") or {}).get("sync"))
-        folder_feed = {f"{podcasts.ROOT}/{podcasts.safe(s['name'])}/": s["url"] for s in subs}
+        folder_feed = {podcasts.channel_folder(s["name"]) + "/": s["url"] for s in subs if podcasts.channel_folder(s["name"])}
 
         def feed_read(path):   # unsubscribed (no feed) counts as read
             url = next((u for f, u in folder_feed.items() if path.startswith(f)), None)
@@ -303,7 +405,7 @@ class SyncJob:
         covers = {s["name"]: feeds[s["url"]]["image"] for _, s, _ in todo if feeds[s["url"]]["image"]}
         with tempfile.TemporaryDirectory(prefix="innisync-pod-") as work:
             for name, url in covers.items():
-                cover = f"{podcasts.ROOT}/{podcasts.safe(name)}/cover.jpg"
+                cover = f"{podcasts.channel_folder(name)}/cover.jpg"
                 if not device.exists(cover):
                     try:
                         local = os.path.join(work, "cover.jpg")
@@ -320,11 +422,11 @@ class SyncJob:
                     local = os.path.join(work, "ep.mp3")
                     podcasts.download(e, local)
                     device.mkdirs([os.path.dirname(path)])
-                    device.push(local, path)
+                    device.push_whole(local, path)
                     os.remove(local)
                     mine[path] = e["url"]
                 except Exception as ex:
-                    self.status["errors"].append(f"Podcast {e['title'].strip()}: {ex}")
+                    self._error(f"Podcast {e['title'].strip()}: {ex}")
         # an episode the Y1 already had stays the Y1's: InniSync never claims (or deletes) it
 
     def _sync_lyrics(self, songs):
@@ -360,7 +462,7 @@ class SyncJob:
                             m["lrclib"] = True
                         except lyrics.Unavailable as e:
                             lrclib_down = True   # stop asking this sync; these songs are tried again next time
-                            self.status["errors"].append(f"Lyrics: {e}")
+                            self._error(f"Lyrics: {e}")
                     if text:
                         local, remote = os.path.join(work, "l.lrc"), os.path.splitext(m["path"])[0] + ".lrc"
                         open(local, "w", encoding="utf-8").write(text)
@@ -369,7 +471,7 @@ class SyncJob:
                     else:
                         m["lrc"] = m.get("lrc") or ""
                 except Exception as e:
-                    self.status["errors"].append(f"Lyrics for {song['name']}: {e}")
+                    self._error(f"Lyrics for {song['name']}: {e}")
 
     def _write_autoplay(self, man):
         """Sound-alike matches for InniClassic Autoplay, as /storage/sdcard0/.innisync_autoplay.json:
@@ -381,7 +483,7 @@ class SyncJob:
         try:
             matches = self.autoplay(list(songs))
         except Exception as e:  # a bonus like the mixes: never fail the sync over it
-            self.status["errors"].append(f"Autoplay matches: {e}")
+            self._error(f"Autoplay matches: {e}")
             return
         ids = [i for i in songs if i in matches]
         pos = {i: n for n, i in enumerate(ids)}
@@ -401,20 +503,25 @@ class SyncJob:
             try:
                 lists += [(("Mix - " if g.get("kind") == "mix" else "Similar - ") + g["name"], g["items"]) for g in self.soundalike(list(songs))]
             except Exception as e:  # a bonus; never fail the sync over it
-                self.status["errors"].append(f"Mixes: {e}")
+                self._error(f"Mixes: {e}")
         written = []
         with tempfile.TemporaryDirectory(prefix="innisync-pl-") as work:
             for title, items in lists:
                 lines = [songs[i]["path"] for i in items if i in songs]
                 if not lines:
                     continue
-                name = PLAYLIST_PREFIX + fat_safe(title, 60) + ".m3u8"
+                base, n = PLAYLIST_PREFIX + fat_safe(title, 60), 1
+                name = base + ".m3u8"
+                while name.casefold() in {w.casefold() for w in written}:   # the card ignores case: "Rock" is "rock"
+                    n += 1
+                    name = f"{base} ({n}).m3u8"
                 local = os.path.join(work, "pl.m3u8")
                 with open(local, "w", encoding="utf-8") as f:
                     f.write("#EXTM3U\n" + "\n".join(lines) + "\n")
                 device.push(local, f"{PLAYLIST_DIR}/{name}")
                 written.append(name)
-        stale = [n for n in man.get("playlists", []) if n not in written]
+        kept = {w.casefold() for w in written}
+        stale = [n for n in man.get("playlists", []) if n.casefold() not in kept]   # a renamed-by-case list is the same file
         if stale:
             device.remove([f"{PLAYLIST_DIR}/{n}" for n in stale])
         man["playlists"] = written

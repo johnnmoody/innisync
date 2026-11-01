@@ -29,11 +29,13 @@
   Object.assign(window, { openPrefs, openSmart, toggleBrowser, newPlaylist: newList });
 
   function keys(e) {
-    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) && !["checkbox", "radio", "range"].includes(document.activeElement.type);
+    // keys belong to the focused control (a button's Space, a slider's arrows) and to any open dialog
+    const onControl = e.target instanceof Element && e.target.closest("button, a[href], input, select, textarea, [contenteditable='true']");
+    const inDialog = !!document.querySelector("[aria-modal='true']");
     if (e.metaKey && e.key === ",") { e.preventDefault(); openPrefs(); return; }
     if (e.metaKey && e.key === "f") { e.preventDefault(); searchEl?.focus(); searchEl?.select(); return; }
     if (e.metaKey && e.key === "b") { e.preventDefault(); toggleBrowser(); return; }
-    if (typing || prefsOpen || smartId !== undefined || dlg.current) return;
+    if (onControl || inDialog || prefsOpen || smartId !== undefined || dlg.current) return;
     const cur = rows.findIndex((s) => s.id === st.selected);
     const sel = (i) => { if (rows.length && st.mode !== "grid") st.selected = rows[Math.max(0, Math.min(rows.length - 1, i))].id; };
     if (e.key === " ") { e.preventDefault(); togglePlay(rows); }

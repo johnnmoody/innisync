@@ -1,10 +1,10 @@
 <script>
   // How the Y1's space is used, previewing what the next sync would change, with Revert / Apply / Sync.
   // On the Settings tab those buttons act on the player's settings instead of on what syncs.
-  import { st, dirty, playerDirty, startSync, syncing } from "../../lib/store.svelte.js";
+  import { st, dirty, playerDirty, startSync, syncing, rebuildRecord } from "../../lib/store.svelte.js";
   import { api } from "../../lib/api.js";
   import { fmtSize } from "../../lib/format.js";
-  import { notice } from "../../lib/dialogs.svelte.js";
+  import { notice, confirm } from "../../lib/dialogs.svelte.js";
 
   const d = $derived(st.device);
   const parts = $derived.by(() => {
@@ -27,7 +27,12 @@
       if (onSettings) { await api("/api/device/player", { settings: $state.snapshot(st.player) }); st.playerSaved = structuredClone($state.snapshot(st.player)); }
       else if (st.plan && !st.plan.fits) await notice("Not enough space on the Y1", "Choose fewer songs, or turn on “Convert lossless songs to 320 kbps MP3” on the Summary page.");
       else await startSync();
-    } catch (e) { await notice(onSettings ? "The settings weren't saved" : "The sync didn't start", e.message); }
+    } catch (e) {
+      if (e.code === "manifest" && await confirm("Rebuild the Y1's record?", `${e.message}\n\nInniSync can rebuild it from the songs already on the Y1. Files it doesn't recognise are left alone.`, "Rebuild Record")) {
+        try { const r = await rebuildRecord(); await notice("Record rebuilt", `Found ${r.songs} songs and ${r.playlists} playlists on the Y1. You can sync now.`); }
+        catch (er) { await notice("The record wasn't rebuilt", er.message); }
+      } else if (e.code !== "manifest") await notice(onSettings ? "The settings weren't saved" : "The sync didn't start", e.message);
+    }
     busy = false;
   }
 </script>

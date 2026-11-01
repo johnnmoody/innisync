@@ -116,10 +116,11 @@ def _selftest(win):
         wait("!!document.querySelector('.about')", 10)
         import urllib.request
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/update/install", data=b'{"dryRun": true}', method="POST",
-                                     headers={"Content-Type": "application/json"})
+                                     headers={"Content-Type": "application/json", "X-InniSync": "1"})
         urllib.request.urlopen(req, timeout=20).read()
         time.sleep(4)
-        dev["dry_run"] = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/update/status", timeout=20)).get("message")
+        status = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/update/status", headers={"X-InniSync": "1"})
+        dev["dry_run"] = json.load(urllib.request.urlopen(status, timeout=20)).get("message")
         js("[...document.querySelectorAll('.rows button')].find(b => b.textContent === 'Back Up').click()")
         wait("[...document.querySelectorAll('.rows button')].find(b => b.textContent === 'Back Up') && ![...document.querySelectorAll('.rows button')].find(b => b.textContent === 'Back Up').disabled", 90)
         dev["backup"] = js("document.querySelectorAll('.rows p')[1].textContent")

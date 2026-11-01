@@ -65,6 +65,16 @@ def shell(cmd, timeout=60):
     return adb("shell", cmd, timeout=timeout).replace("\r", "")
 
 
+def shell_ok(cmd, timeout=60):
+    """shell(), but raises DeviceError when the command fails on the Y1. Android 4.2's adb doesn't pass back exit
+    codes (that came with Android 7), so the status is echoed after the command and read back."""
+    out = shell(f"{cmd}; echo __RC=$?", timeout=timeout)
+    body, _, rc = out.rstrip("\n").rpartition("__RC=")
+    if rc.strip() != "0":
+        raise DeviceError(body.strip()[-300:] or f"The Y1 couldn't run: {cmd[:80]}")
+    return body
+
+
 def q(path):
     return shlex.quote(path)
 
@@ -169,38 +179,55 @@ def set_name(name):
     shell(f"setprop persist.innisync.name {q(name)}")
 
 
+class ManifestError(DeviceError):
+    """The Y1's sync record exists but can't be read. Syncing on would treat the Y1 as empty and copy everything again
+    (or lose track of what to remove), so callers stop instead."""
+
+
+EMPTY_MANIFEST = {"songs": {}, "playlists": []}
+
+
 def read_manifest():
+    """InniSync's record of what it put on the Y1. No record = a Y1 InniSync hasn't synced yet."""
+    if not exists(MANIFEST):
+        return json.loads(json.dumps(EMPTY_MANIFEST))
     try:
-        out = adb("shell", f"cat {q(MANIFEST)} 2>/dev/null", timeout=30)
-        return json.loads(out) if out.strip() else {"songs": {}, "playlists": []}
-    except (ValueError, DeviceError):
-        return {"songs": {}, "playlists": []}
+        data = json.loads(adb("shell", f"cat {q(MANIFEST)}", timeout=60))
+    except (ValueError, DeviceError) as e:
+        raise ManifestError(f"InniSync couldn't read its record of what's on the Y1, so it changed nothing. "
+                            f"Unplug the Y1, plug it back in and try again. ({e})")
+    if not isinstance(data, dict) or not isinstance(data.get("songs"), dict):
+        raise ManifestError("InniSync's record of what's on the Y1 is damaged, so it changed nothing. "
+                            f"It's at {MANIFEST}; a backup of the Y1 doesn't include it.")
+    return data
 
 
 def write_manifest(man):
+    """Written next to the real one and renamed into place, so an interrupted write never leaves half a record."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(man, f)
         tmp = f.name
     try:
-        push(tmp, MANIFEST)
+        push(tmp, MANIFEST + ".tmp")
+        shell_ok(f"mv {q(MANIFEST + '.tmp')} {q(MANIFEST)}")
     finally:
         os.unlink(tmp)
 
 
-SHELL_MAX = 900  # the Y1's old adb refuses longer shell lines ("shell command too long")
+SHELL_MAX = 880  # the Y1's old adb refuses longer shell lines ("shell command too long"); shell_ok adds 15
 
 
 def _batched(cmd, paths, timeout):
-    """Run `cmd path path ...` in as many calls as it takes to keep each line under SHELL_MAX."""
+    """Run `cmd path path ...` in as many calls as it takes to keep each line under SHELL_MAX; raises if one fails."""
     line = cmd
     for p in paths:
         arg = " " + q(p)
         if line != cmd and len(line) + len(arg) > SHELL_MAX:
-            shell(line, timeout=timeout)
+            shell_ok(line, timeout=timeout)
             line = cmd
         line += arg
     if line != cmd:
-        shell(line, timeout=timeout)
+        shell_ok(line, timeout=timeout)
 
 
 def mkdirs(paths):
@@ -209,6 +236,13 @@ def mkdirs(paths):
 
 def push(local, remote):
     adb("push", local, remote, timeout=1800)
+
+
+def push_whole(local, remote):
+    """Push under a temporary name, then rename: a copy cut short never sits at the real path looking finished
+    (InniClassic treats a podcast file at its path as downloaded). A rename keeps the file's date."""
+    push(local, remote + ".part")
+    shell_ok(f"mv {q(remote + '.part')} {q(remote)}")
 
 
 def pull(remote, local, timeout=600):
@@ -394,8 +428,8 @@ def set_player_prefs(changes):
         push(tmp, "/data/local/tmp/innisync_prefs.xml")
     finally:
         os.unlink(tmp)
-    shell(f"cat /data/local/tmp/innisync_prefs.xml > {q(PLAYER_PREFS)} && chown {uid}:{gid} {q(PLAYER_PREFS)} && "
-          f"chmod 660 {q(PLAYER_PREFS)}; rm -f /data/local/tmp/innisync_prefs.xml")
+    shell_ok(f"cat /data/local/tmp/innisync_prefs.xml > {q(PLAYER_PREFS)} && chown {uid}:{gid} {q(PLAYER_PREFS)} && "
+             f"chmod 660 {q(PLAYER_PREFS)}; rc=$?; rm -f /data/local/tmp/innisync_prefs.xml; [ $rc = 0 ]")
     restart_player()
 
 
@@ -477,6 +511,9 @@ def remove_folder(root, folder):
 
 
 # ---- audiobooks ----
+LOOSE_BOOKS = "(loose files)"   # files straight in Audiobooks, listed as one book
+
+
 def audiobooks():
     """[{book, files:[{name, size}]}]: each folder in Audiobooks is one book (chapters play in name order)."""
     # toolbox ls -l prints bare names, so walk ls -lR and track the "<dir>:" headers
@@ -491,11 +528,16 @@ def audiobooks():
         if not m:
             continue
         rel = cur[len(AUDIOBOOKS):].strip("/")
-        books.setdefault(rel or "(loose files)", []).append({"name": m.group(2), "size": int(m.group(1)), "path": f"{cur}/{m.group(2)}"})
+        books.setdefault(rel or LOOSE_BOOKS, []).append({"name": m.group(2), "size": int(m.group(1)), "path": f"{cur}/{m.group(2)}"})
     return [{"book": b, "files": sorted(f, key=lambda x: x["name"].lower())} for b, f in sorted(books.items(), key=lambda kv: kv[0].lower())]
 
 
 def remove_book(book):
-    if not book or "/" in book or book in (".", ".."):
-        raise DeviceError("Not a book folder")
-    shell(f"rm -rf {q(AUDIOBOOKS + '/' + book)}")
+    """Remove exactly the files the Audiobooks list shows for `book` (a folder's own files, or the loose ones at the
+    top), then its folder if that leaves it empty. A folder holding other books keeps them."""
+    files = next((b["files"] for b in audiobooks() if b["book"] == book), None)
+    if not files:
+        raise DeviceError("That book isn't on the Y1")
+    _batched("rm -f", [f["path"] for f in files], 120)
+    if book != LOOSE_BOOKS:
+        shell(f"rmdir {q(AUDIOBOOKS + '/' + book)} 2>/dev/null; true")
