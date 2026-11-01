@@ -12,8 +12,8 @@ import urllib.request
 
 from . import device, lyrics, playcounts, podcasts, tools
 from .device import PLAYABLE, PLAYLIST_DIR, SD, SYNC_DIR
+from .jellyfin import APP_DIR
 
-APP_DIR = os.path.expanduser("~/Library/Application Support/InniSync")
 FFMPEG = tools.find("ffmpeg", "INNISYNC_FFMPEG")
 AUTOPLAY_MAP = f"{SD}/.innisync_autoplay.json"   # read by InniClassic Autoplay (the InniSync build of the player)
 PLAYLIST_PREFIX = device.PLAYLIST_PREFIX

@@ -38,8 +38,11 @@
   .cell { display: flex; flex-direction: column; gap: 2px; border: 0; background: none; padding: 6px; border-radius: var(--r-md); text-align: left; min-width: 0; }
   .cell:hover { background: var(--hover); }
   .cell.sel { background: var(--accent-soft); }
-  .mosaic { display: grid; grid-template-columns: 1fr 1fr; aspect-ratio: 1; border-radius: var(--r-sm); overflow: hidden; background: var(--line); margin-bottom: 6px; }
-  .mosaic img { width: 100%; height: 100%; object-fit: cover; }
+  /* four covers in a 2 x 2 square, like the cover grid's frame */
+  .mosaic { display: block; position: relative; width: 100%; aspect-ratio: 1 / 1; border-radius: var(--r-sm); overflow: hidden; background: var(--line); margin-bottom: 6px; }
+  .mosaic img { position: absolute; width: 50%; height: 50%; object-fit: cover; }
+  .mosaic img:nth-child(1) { left: 0; top: 0; } .mosaic img:nth-child(2) { left: 50%; top: 0; }
+  .mosaic img:nth-child(3) { left: 0; top: 50%; } .mosaic img:nth-child(4) { left: 50%; top: 50%; }
   .t1 { font-weight: 600; font-size: 13px; }
   .t2 { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

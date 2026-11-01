@@ -10,7 +10,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-APP_DIR = os.path.expanduser("~/Library/Application Support/InniSync")
+# where InniSync keeps its settings and caches; INNISYNC_DATA points a second copy (development, demos) elsewhere
+APP_DIR = os.path.expanduser(os.environ.get("INNISYNC_DATA") or "~/Library/Application Support/InniSync")
 CONFIG = os.path.join(APP_DIR, "jellyfin.json")      # server URL + signed-in user (no secrets)
 KEYCHAIN_SERVICE = "InniSync Jellyfin"                  # access token lives in the macOS Keychain
 CLIENT = {"Client": "InniSync", "Device": socket.gethostname().split(".")[0] or "Mac",
