@@ -4,18 +4,17 @@ import json
 import os
 import re
 import socket
-import subprocess
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import files
+from . import files, system
 
 # where InniSync keeps its settings and caches; INNISYNC_DATA points a second copy (development, demos) elsewhere
-APP_DIR = os.path.expanduser(os.environ.get("INNISYNC_DATA") or "~/Library/Application Support/InniSync")
+APP_DIR = system.data_dir()
 CONFIG = os.path.join(APP_DIR, "jellyfin.json")      # server URL + signed-in user (no secrets)
-KEYCHAIN_SERVICE = "InniSync Jellyfin"                  # access token lives in the macOS Keychain
+KEYCHAIN_SERVICE = "InniSync Jellyfin"                  # access token, kept in the system's secret store (system.py)
 CLIENT = {"Client": "InniSync", "Device": socket.gethostname().split(".")[0] or "Mac",
           "DeviceId": "innisync-" + (socket.gethostname().split(".")[0] or "mac").lower(), "Version": "1.0"}
 DEFAULT_SERVER = ""   # asked for in Preferences
@@ -36,18 +35,6 @@ def load_config():
 
 def save_config(cfg):
     files.write_json(CONFIG, cfg, indent=1)
-
-
-def _keychain(action, account, token=None):
-    if action == "get":
-        p = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"],
-                           capture_output=True, text=True)
-        return p.stdout.strip() if p.returncode == 0 else None
-    if action == "set":
-        subprocess.run(["security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", account, "-w", token],
-                       capture_output=True, check=True)
-    if action == "delete":
-        subprocess.run(["security", "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account], capture_output=True)
 
 
 def auth_header(token=None):
@@ -79,26 +66,26 @@ def quick_connect_start(server):
 
 
 def quick_connect_poll(server, secret):
-    """None while waiting; on approval, signs in, stores the token in the Keychain and returns the user name."""
+    """None while waiting; on approval, signs in, stores the token in the system's secret store and returns the user name."""
     st = _raw("GET", server, "/QuickConnect/Connect?" + urllib.parse.urlencode({"secret": secret}))
     if not st.get("Authenticated"):
         return None
     auth = _raw("POST", server, "/Users/AuthenticateWithQuickConnect", {"Secret": secret})
     user = auth["User"]
-    _keychain("set", server, auth["AccessToken"])
+    system.secret_set(KEYCHAIN_SERVICE, server, auth["AccessToken"])
     save_config({"server": server, "user_id": user["Id"], "user_name": user["Name"]})
     return user["Name"]
 
 
 def sign_out():
     cfg = load_config()
-    token = _keychain("get", cfg.get("server", ""))
+    token = system.secret_get(KEYCHAIN_SERVICE, cfg.get("server", ""))
     if token:
         try:
             _raw("POST", cfg["server"], "/Sessions/Logout", token=token, timeout=8)
         except Exception:
             pass
-    _keychain("delete", cfg.get("server", ""))
+    system.secret_delete(KEYCHAIN_SERVICE, cfg.get("server", ""))
     save_config({"server": cfg.get("server", DEFAULT_SERVER)})
 
 
@@ -112,14 +99,14 @@ def norm(s):
 
 
 class Jellyfin:
-    """Signed-in Jellyfin user (Quick Connect token from the Keychain)."""
+    """Signed-in Jellyfin user (Quick Connect token from the system's secret store)."""
 
     def __init__(self):
         cfg = load_config()
         self.base = cfg.get("server", DEFAULT_SERVER).rstrip("/")
         self.user_id = cfg.get("user_id")
         self.user_name = cfg.get("user_name")
-        self.key = _keychain("get", cfg.get("server", "")) if self.user_id else None
+        self.key = system.secret_get(KEYCHAIN_SERVICE, cfg.get("server", "")) if self.user_id else None
         if not self.key:
             raise NotSignedIn("Sign in to Jellyfin in InniSync Preferences")
 

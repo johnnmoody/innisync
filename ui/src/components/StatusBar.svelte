@@ -3,6 +3,7 @@
   import { st, toggleBrowser, openSimilar, newPlaylist } from "../lib/store.svelte.js";
   import { fmtSpan, fmtSize, plural } from "../lib/format.js";
   import { askText, notice } from "../lib/dialogs.svelte.js";
+  import { MOD } from "../lib/keys.js";
   let { rows, onNewSmart } = $props();
 
   const summary = $derived.by(() => {
@@ -30,7 +31,7 @@
     <button class="quiet" title="New playlist (Option-click for a smart playlist)" aria-label="New playlist" onclick={newList}><Icon name="plus" size={14} /></button>
     <button class="quiet" class:on={st.shuffle} aria-pressed={st.shuffle} title="Shuffle" aria-label="Shuffle" onclick={() => (st.shuffle = !st.shuffle)}><Icon name="shuffle" size={14} /></button>
     <button class="quiet" class:on={st.repeat} aria-pressed={st.repeat} title="Repeat" aria-label="Repeat" onclick={() => (st.repeat = !st.repeat)}><Icon name="repeat" size={14} /></button>
-    <button class="quiet" class:on={st.showBrowser} aria-pressed={st.showBrowser} disabled={!browserAllowed} title="{st.showBrowser ? 'Hide' : 'Show'} column browser (Cmd+B)" aria-label="Column browser" onclick={() => toggleBrowser()}><Icon name="columns" size={14} /></button>
+    <button class="quiet" class:on={st.showBrowser} aria-pressed={st.showBrowser} disabled={!browserAllowed} title="{st.showBrowser ? 'Hide' : 'Show'} column browser ({MOD}+B)" aria-label="Column browser" onclick={() => toggleBrowser()}><Icon name="columns" size={14} /></button>
   </div>
   <div class="mid" aria-live="polite">{shown || summary}</div>
   <div class="right">

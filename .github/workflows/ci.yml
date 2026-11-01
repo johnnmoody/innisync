@@ -20,6 +20,8 @@ jobs:
             python: "3.14"
             navidrome: darwin_arm64
             navidrome_sha256: 8b0a7798001453719ad50c12f7025a6044546c4a3568efe51feb296681f29956
+          - os: windows-2022   # unit tests only (the Navidrome test is skipped without it)
+            python: "3.12"
     runs-on: ${{ matrix.os }}
     env:
       NAVIDROME_VERSION: 0.64.2
@@ -36,9 +38,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - name: ffmpeg
+        if: matrix.navidrome
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -yq ffmpeg; else brew install ffmpeg; fi
       - name: Navidrome (checked against its published checksum)
+        if: matrix.navidrome
         run: |
           f="navidrome_${NAVIDROME_VERSION}_${{ matrix.navidrome }}.tar.gz"
           curl -fsSLO "https://github.com/navidrome/navidrome/releases/download/v${NAVIDROME_VERSION}/$f"

@@ -1,6 +1,8 @@
-# What InniSync needs to run. tools/build_app.sh and CI install from here.
+# What InniSync needs to run. tools/build_app.sh, the release build and CI install from here.
 pywebview==6.2.1
 numpy==2.5.4
 scipy==1.18.1
 librosa==1.0.0
 pillow==13.0.0
+keyring==25.7.0; sys_platform != "darwin"   # sign-ins on Windows and Linux (macOS uses the Keychain directly)
+tzlocal==5.4.4; sys_platform == "win32"      # the timezone name for the Y1's clock

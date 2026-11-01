@@ -1,7 +1,7 @@
 """Subsonic / OpenSubsonic client (Navidrome, gonic, Airsonic-Advanced, LMS, ...), the same shape as jellyfin.Jellyfin.
 
 Auth is the Subsonic token scheme: each request carries u, t = md5(password + salt) and s = salt, so the password
-itself never goes over the wire; it's kept in the macOS Keychain ("InniSync Subsonic"). The whole library comes from
+itself never goes over the wire; it's kept in the system's secret store ("InniSync Subsonic", see system.py). The whole library comes from
 search3 with an empty query, paged (OpenSubsonic servers allow that for exactly this, Navidrome included).
 Timed lyrics use OpenSubsonic getLyricsBySongId when the server lists the songLyrics extension.
 """
@@ -10,12 +10,11 @@ import hashlib
 import json
 import os
 import secrets
-import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import files
+from . import files, system
 from .jellyfin import APP_DIR, NotSignedIn
 
 CONFIG = os.path.join(APP_DIR, "subsonic.json")   # server URL + user name (no secrets)
@@ -38,18 +37,6 @@ def load_config():
 
 def save_config(cfg):
     files.write_json(CONFIG, cfg, indent=1)
-
-
-def _keychain(action, account, secret=None):
-    if action == "get":
-        p = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"],
-                           capture_output=True, text=True)
-        return p.stdout.strip() if p.returncode == 0 else None
-    if action == "set":
-        subprocess.run(["security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", account, "-w", secret],
-                       capture_output=True, check=True)
-    if action == "delete":
-        subprocess.run(["security", "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account], capture_output=True)
 
 
 def _account(server, user):
@@ -79,12 +66,12 @@ def _call(server, user, password, method, timeout=60, **params):
 
 
 def sign_in(server, user, password):
-    """Check the credentials against the server, then keep them (password in the Keychain). Returns server info."""
+    """Check the credentials against the server, then keep them (password in the system's secret store). Returns server info."""
     server = server.strip().rstrip("/")
     if not server.startswith(("http://", "https://")):
         server = "http://" + server
     res = _call(server, user, password, "ping", timeout=10)
-    _keychain("set", _account(server, user), password)
+    system.secret_set(KEYCHAIN_SERVICE, _account(server, user), password)
     save_config({"server": server, "user_name": user})
     return {"server": server, "user": user, "type": res.get("type") or "subsonic", "version": res.get("serverVersion")}
 
@@ -92,7 +79,7 @@ def sign_in(server, user, password):
 def sign_out():
     cfg = load_config()
     if cfg.get("server") and cfg.get("user_name"):
-        _keychain("delete", _account(cfg["server"], cfg["user_name"]))
+        system.secret_delete(KEYCHAIN_SERVICE, _account(cfg["server"], cfg["user_name"]))
     save_config({"server": cfg.get("server", "")})
 
 
@@ -117,7 +104,7 @@ class Subsonic:
     def __init__(self):
         cfg = load_config()
         self.base, self.user = cfg.get("server"), cfg.get("user_name")
-        self.password = _keychain("get", _account(self.base, self.user)) if self.base and self.user else None
+        self.password = system.secret_get(KEYCHAIN_SERVICE, _account(self.base, self.user)) if self.base and self.user else None
         if not self.password:
             raise NotSignedIn("Not signed in to a Subsonic server")
         self.user_id = _account(self.base, self.user)   # keys the library cache, like Jellyfin's user id

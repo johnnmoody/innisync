@@ -8,15 +8,27 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+from innisync import system  # noqa: E402
 from innisync.server import serve  # noqa: E402
 from innisync.state import load_prefs  # noqa: E402
 
 PORT = int(os.environ.get("INNISYNC_PORT", "8765"))
-ICONS = os.path.join(HERE, "..", "icons")   # inside the app bundle: Contents/Resources/icons/<accent>.png
+FROZEN = getattr(sys, "frozen", False)   # the downloadable app (PyInstaller), with Python inside
+# accent icons: next to the code in the downloadable app, Contents/Resources/icons in the one tools/build_app.sh makes
+ICONS = os.path.join(sys._MEIPASS, "icons") if FROZEN else os.path.join(HERE, "..", "icons")
+MOD = "⌘" if system.MAC else "Ctrl+"
+
+
+def _log_to_file():
+    """The downloadable app has no terminal: output goes to the log (tools/build_app.sh's launcher does this itself)."""
+    os.makedirs(os.path.dirname(system.log_path()), exist_ok=True)
+    sys.stdout = sys.stderr = open(system.log_path(), "a", buffering=1, encoding="utf-8")
 
 
 def _brand_app():
     """Show 'InniSync' and its icon (tinted in the accent colour) in the menu bar and Dock."""
+    if not system.MAC:
+        return
     try:
         from AppKit import NSApplication, NSImage
         from Foundation import NSBundle
@@ -31,28 +43,41 @@ def _brand_app():
 
 
 def main():
+    if FROZEN:
+        _log_to_file()
     httpd = serve(PORT)
+    url = f"http://127.0.0.1:{PORT}/"
     if "--server-only" in sys.argv:
-        print(f"InniSync on http://127.0.0.1:{PORT}", flush=True)
+        print(f"InniSync on {url}", flush=True)
         httpd.serve_forever()
         return
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     _brand_app()
-    import webview
-    from webview.menu import Menu, MenuAction
-    win = webview.create_window("InniSync", f"http://127.0.0.1:{PORT}/", width=1200, height=780, min_size=(960, 620))
-    menu = [Menu("InniSync", [MenuAction("Preferences…  ⌘,", lambda: win.evaluate_js("openPrefs()"))]),
-            Menu("File", [MenuAction("New Playlist…", lambda: win.evaluate_js("newPlaylist()")),
-                          MenuAction("New Smart Playlist…", lambda: win.evaluate_js("openSmart()"))]),
-            Menu("View", [MenuAction("Show or Hide Column Browser  ⌘B", lambda: win.evaluate_js("toggleBrowser()"))])]
-    if "--selftest" in sys.argv:
-        threading.Thread(target=_selftest, args=(win,), daemon=True).start()
-    webview.start(_after_start, (win,), menu=menu)
+    try:
+        import webview
+        from webview.menu import Menu, MenuAction
+        win = webview.create_window("InniSync", url, width=1200, height=780, min_size=(960, 620))
+        menu = [Menu("InniSync", [MenuAction(f"Preferences…  {MOD},", lambda: win.evaluate_js("openPrefs()"))]),
+                Menu("File", [MenuAction("New Playlist…", lambda: win.evaluate_js("newPlaylist()")),
+                              MenuAction("New Smart Playlist…", lambda: win.evaluate_js("openSmart()"))]),
+                Menu("View", [MenuAction(f"Show or Hide Column Browser  {MOD}B", lambda: win.evaluate_js("toggleBrowser()"))])]
+        if "--selftest" in sys.argv:
+            threading.Thread(target=_selftest, args=(win,), daemon=True).start()
+        webview.start(_after_start, (win,), menu=menu)
+    except Exception as e:
+        # no native web view here (Linux without GTK's or Qt's WebKit): the same page works in a browser
+        print(f"No app window ({e}); opening InniSync in the browser at {url}", flush=True)
+        import webbrowser
+        webbrowser.open(url)
+        try:
+            threading.Event().wait()   # keep serving until the process is stopped
+        except KeyboardInterrupt:
+            pass
 
 
 def _after_start(win):
     """Runs once the window is up (pywebview's start func, on its own thread)."""
-    if load_prefs().get("show_menubar", True):
+    if system.MAC and load_prefs().get("show_menubar", True):
         from PyObjCTools import AppHelper
         from innisync import menubar
         AppHelper.callAfter(menubar.install, PORT, win)
@@ -162,6 +187,15 @@ def _selftest(win):
     js("[...document.querySelectorAll('.side .item')].find(b => b.textContent.trim() === 'Mixes').click()")
     wait("document.querySelectorAll('.cell').length > 0 || !!document.querySelector('.note')", 60)
     say("MIXES", {"mixes": js("document.querySelectorAll('.mosaic').length"), "note": js("document.querySelector('.wrap .note')?.textContent || ''")})
+    # fresh sound analysis of one song, in this process: in the downloadable app this proves librosa and numba work
+    try:
+        from innisync import soundalike
+        from innisync.state import S
+        song = next(s for s in S.library().values() if (s.get("duration") or 0) > 60)
+        t0 = time.time()
+        say("ANALYSIS", {"features": len(soundalike.analyze(S.jf, song)), "seconds": round(time.time() - t0, 1)})
+    except Exception as e:
+        say("ANALYSIS", {"error": repr(e)})
     say("ERRORS", js("window.__errors"))
     time.sleep(1)
     win.destroy()

@@ -6,7 +6,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from . import device, files, sync
+from . import device, files, sync, system
 
 CATALOG_REPO = "y1-community/InnioasisY1Themes"   # community themes for the Y1's original firmware
 CATALOG_CACHE = os.path.join(sync.APP_DIR, "theme_catalog.json")
@@ -91,21 +91,30 @@ def install_zip(data):
 
 
 def make_wallpaper(data):
-    """Any image -> 480x360 JPEG (the Y1's screen), cropped to fill. Uses macOS sips."""
-    import subprocess
+    """Any image -> 480x360 JPEG (the Y1's screen), cropped to fill. Returns (work folder, jpeg path)."""
+    import io
     import tempfile
+    from PIL import Image, ImageOps, UnidentifiedImageError
     work = tempfile.mkdtemp(prefix="innisync-wp-")
-    src, out = os.path.join(work, "src"), os.path.join(work, "wallpaper.jpg")
+    out = os.path.join(work, "wallpaper.jpg")
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except (UnidentifiedImageError, OSError):
+        if not system.MAC:
+            raise ValueError("That file isn't an image InniSync can read")
+        img = Image.open(io.BytesIO(_sips_to_jpeg(data, work)))   # HEIC photos and the like: macOS can read them
+    img = ImageOps.fit(ImageOps.exif_transpose(img).convert("RGB"), (480, 360), Image.Resampling.LANCZOS)
+    img.save(out, "JPEG", quality=90)
+    return work, out
+
+
+def _sips_to_jpeg(data, work):
+    import subprocess
+    src, jpg = os.path.join(work, "src"), os.path.join(work, "src.jpg")
     with open(src, "wb") as f:
         f.write(data)
-    dims = subprocess.run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", src], capture_output=True, text=True).stdout
-    try:
-        w = int(dims.split("pixelWidth:")[1].split()[0])
-        h = int(dims.split("pixelHeight:")[1].split()[0])
-    except (IndexError, ValueError):
+    if subprocess.run(["sips", "-s", "format", "jpeg", src, "--out", jpg], capture_output=True).returncode != 0:
         raise ValueError("That file isn't an image InniSync can read")
-    scale = max(480 / w, 360 / h)
-    subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "90", "-z", str(round(h * scale)), str(round(w * scale)),
-                    src, "--out", out], check=True, capture_output=True)
-    subprocess.run(["sips", "-c", "360", "480", out], check=True, capture_output=True)
-    return work, out
+    with open(jpg, "rb") as f:
+        return f.read()

@@ -15,7 +15,7 @@ import urllib.request
 
 import pytest
 
-from innisync import server, state, subsonic
+from innisync import server, state, subsonic, system
 
 ND = os.environ.get("INNISYNC_NAVIDROME") or shutil.which("navidrome") or os.path.expanduser("~/Library/Caches/innisync-test/nd/navidrome")
 FFMPEG = shutil.which("ffmpeg")
@@ -71,7 +71,7 @@ def navidrome():
 
 @pytest.fixture
 def client(navidrome, monkeypatch):
-    monkeypatch.setattr(subsonic, "_keychain", lambda action, account, secret=None: navidrome["password"] if action == "get" else None)
+    monkeypatch.setattr(system, "secret_get", lambda service, account: navidrome["password"])
     monkeypatch.setattr(subsonic, "load_config", lambda: {"server": navidrome["base"], "user_name": navidrome["user"]})
     return subsonic.Subsonic()
 

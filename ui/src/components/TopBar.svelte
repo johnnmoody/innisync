@@ -6,6 +6,7 @@
   import { st, togglePlay, previous, step, seek, setVolume, syncing, UPDATE_ACTIVE, visibleSongs, clearFilters, rebuildRecord, dismissSync, syncAllowingRemovals } from "../lib/store.svelte.js";
   import { notice, confirm } from "../lib/dialogs.svelte.js";
   import { api, art } from "../lib/api.js";
+  import { MOD } from "../lib/keys.js";
   import { fmtTime } from "../lib/format.js";
 
   let { searchEl = $bindable() } = $props();
@@ -39,10 +40,10 @@
 
 <header class="bar">
   <div class="transport">
-    <button class="quiet" aria-label="Previous" title="Previous (Cmd+Left)" onclick={previous}><Icon name="prev" /></button>
+    <button class="quiet" aria-label="Previous" title="Previous ({MOD}+Left)" onclick={previous}><Icon name="prev" /></button>
     <button class="quiet play" aria-label={st.paused ? "Play" : "Pause"} title="Play or pause (Space)" onclick={() => togglePlay(visibleSongs())}><Icon name={st.paused ? "play" : "pause"} size={18} /></button>
-    <button class="quiet" aria-label="Next" title="Next (Cmd+Right)" onclick={() => step(1)}><Icon name="next" /></button>
-    <label class="vol" title="Volume (Cmd+Up / Cmd+Down)"><span class="sr">Volume</span><Icon name="volume" size={14} />
+    <button class="quiet" aria-label="Next" title="Next ({MOD}+Right)" onclick={() => step(1)}><Icon name="next" /></button>
+    <label class="vol" title="Volume ({MOD}+Up / {MOD}+Down)"><span class="sr">Volume</span><Icon name="volume" size={14} />
       <input type="range" min="0" max="100" value={Math.round(st.volume * 100)} oninput={(e) => setVolume(e.currentTarget.value / 100)} /></label>
   </div>
 
@@ -85,7 +86,7 @@
       </div>
     {/if}
     <label class="search"><span class="sr">Search</span><Icon name="search" size={14} />
-      <input type="search" placeholder="Search" title="Search (Cmd+F)" bind:this={searchEl} bind:value={searchText} oninput={onSearch} /></label>
+      <input type="search" placeholder="Search" title="Search ({MOD}+F)" bind:this={searchEl} bind:value={searchText} oninput={onSearch} /></label>
   </div>
 </header>
 

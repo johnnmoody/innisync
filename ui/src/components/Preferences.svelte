@@ -2,6 +2,7 @@
   import Modal from "./Modal.svelte";
   import { st, savePrefs, loadLibrary } from "../lib/store.svelte.js";
   import { api } from "../lib/api.js";
+  import { MAC } from "../lib/keys.js";
   import { Y1_COLORS, y1Svg } from "../lib/y1.js";
   import { accentFor } from "../lib/accent.js";
 
@@ -119,7 +120,7 @@
     <div class="checks">
       <label><input type="checkbox" bind:checked={p.auto_sync} /> Sync automatically with its saved Music settings</label>
       <label><input type="checkbox" bind:checked={p.auto_backup} /> Back it up automatically (at most once an hour)</label>
-      <label><input type="checkbox" bind:checked={p.show_menubar} /> Show InniSync in the menu bar (after the next launch)</label>
+      {#if MAC}<label><input type="checkbox" bind:checked={p.show_menubar} /> Show InniSync in the menu bar (after the next launch)</label>{/if}
     </div>
     <div class="grid">
       <label class="k" for="bkFolder">Backup folder</label>

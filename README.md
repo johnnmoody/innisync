@@ -55,31 +55,53 @@ from there: it only ever touches the songs it put on the Y1, never files you add
 
 ## Getting started
 ### What you need
-- A Mac with macOS 12 or later, for now. Windows and Linux are planned; the interface is the same everywhere.
+- A Mac (macOS 12 or later, Apple silicon), a Windows 10 or 11 PC, or a Linux PC. The interface is the same on all
+  of them.
 - A Jellyfin server, or a Subsonic-compatible one such as Navidrome, gonic or Airsonic.
 - A Y1 running InniClassic that `adb` can reach over USB: with the Y1 plugged in, `adb devices` lists it.
-- To build it: Python 3.12 or later, Node 20.19 or later, `adb` and `ffmpeg`. With Homebrew:
-  ```bash
-  brew install python node ffmpeg
-  ```
-  ```bash
-  brew install --cask android-platform-tools
-  ```
+- `adb` and `ffmpeg`, which InniSync uses but doesn't include:
 
-### Install
+| System | Install them with |
+|---|---|
+| macOS | `brew install ffmpeg` and `brew install --cask android-platform-tools` ([Homebrew](https://brew.sh)) |
+| Windows | `winget install Gyan.FFmpeg Google.PlatformTools`. If `adb devices` doesn't list the Y1, install its USB driver with [Innioasis Updater CE](https://github.com/y1-community/Innioasis-Updater). |
+| Linux | Your package manager, for example `sudo apt install ffmpeg adb` |
+
+### Download
+Get the file for your system from the [latest release](https://github.com/johnnmoody/innisync/releases/latest):
+- **macOS:** unzip `InniSync-<version>-macos.zip` and move InniSync to Applications. InniSync isn't notarised by
+  Apple (that needs a paid developer account), so the first time, open it, then go to System Settings, Privacy &
+  Security, and click Open Anyway.
+- **Windows:** unzip `InniSync-<version>-windows.zip` anywhere and run `InniSync.exe` in the InniSync folder. If
+  SmartScreen warns about an unknown publisher, click More info, then Run anyway.
+- **Linux:** unpack `InniSync-<version>-linux.tar.gz` and run `InniSync/InniSync`. It opens in your web browser.
+  Sign-ins are kept in your desktop's keyring (GNOME Keyring or KWallet).
+
+Each release lists SHA-256 checksums in `SHA256SUMS.txt`.
+
+### Build it yourself
+You need Python 3.12 or later and Node 20.19 or later.
 ```bash
 git clone https://github.com/johnnmoody/innisync.git
 ```
+On a Mac, this builds `/Applications/InniSync.app`, which uses a Python environment in `~/.venvs/innisync`:
 ```bash
 bash innisync/tools/build_app.sh
 ```
-That builds `/Applications/InniSync.app`. Because you built it yourself, it opens like any other app.
+Anywhere, the downloadable app (with Python inside) is built like this, into `dist/`:
+```bash
+cd innisync/ui && npm ci && npx vite build && cd ..
+```
+```bash
+pip install -r requirements-build.txt && python tools/build_release.py
+```
 
 ### First run
 1. **Sign in.** Click Sign In. For Jellyfin, enter your server's address and click Sign In with Quick
    Connect, then approve the code from any device already signed in to Jellyfin (Settings, then Quick Connect). For
    Navidrome or another Subsonic server, enter the address, your user name and password. Your password stays in the
-   macOS Keychain; only a salted token is sent.
+   system's own password store (the macOS Keychain, Windows Credential Manager, or your Linux keyring); only a salted
+   token is sent.
 2. **Plug in the Y1.** It appears in the sidebar under Y1, with its battery level.
 3. **Pick your Y1's colour** in Preferences, Devices. The Y1 can't report it, and it sets InniSync's accent colour
    (or choose Grey).
@@ -88,7 +110,7 @@ That builds `/Applications/InniSync.app`. Because you built it yourself, it open
 ### Your library
 - Double-click a song to play it on your computer. The round cover in the top bar fills its ring as the song plays.
 - Switch between **Songs**, **Songs by album** and **Covers** with the buttons at the top right.
-- Turn on the **column browser** (Genres, Artists, Albums) from the button at the bottom left, or Cmd+B.
+- Turn on the **column browser** (Genres, Artists, Albums) from the button at the bottom left, or Cmd+B (Ctrl+B on Windows and Linux).
 - **New playlist:** the + button at the bottom left. **Smart playlist:** Option-click +, or File, New Smart
   Playlist. Right-click a smart playlist to edit or delete it.
 - **Similar Songs** (bottom right) lists songs on your Y1 that go with the selected one. Keep on Y1 makes it a
@@ -140,6 +162,8 @@ On the **Summary** tab:
 - **Rescan Library:** if songs don't show up on the Y1.
 
 ### Keyboard shortcuts
+On Windows and Linux, use Ctrl where this says Cmd.
+
 | Keys | Does |
 |---|---|
 | Space | Play or pause |

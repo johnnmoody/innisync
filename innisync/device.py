@@ -6,7 +6,7 @@ import shlex
 import subprocess
 import tempfile
 
-from . import tools
+from . import system, tools
 
 ADB = tools.find("adb", "INNISYNC_ADB")
 SD = "/storage/sdcard0"
@@ -351,13 +351,7 @@ def rescan_library():
 
 def fix_clock():
     import time
-    shell(f"date -s {time.strftime('%Y%m%d.%H%M%S')}; setprop persist.sys.timezone {mac_timezone()}")
-
-
-def mac_timezone():
-    """This computer's timezone name (e.g. Europe/Berlin), from where /etc/localtime points."""
-    real = os.path.realpath("/etc/localtime")
-    return real.split("zoneinfo/", 1)[1] if "zoneinfo/" in real else "UTC"
+    shell(f"date -s {time.strftime('%Y%m%d.%H%M%S')}; setprop persist.sys.timezone {system.timezone()}")
 
 
 def _cat_json(path):

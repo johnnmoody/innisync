@@ -13,6 +13,7 @@
     togglePlay, step, previous, setVolume, play, toggleBrowser, dirty, playerDirty, syncing, newPlaylist,
   } from "./lib/store.svelte.js";
   import { api } from "./lib/api.js";
+  import { mod } from "./lib/keys.js";
 
   let prefsOpen = $state(null);   // null, or {pane, signIn}
   let smartId = $state(undefined); // undefined = closed, null = new, "<id>" = edit
@@ -32,16 +33,16 @@
     // keys belong to the focused control (a button's Space, a slider's arrows) and to any open dialog
     const onControl = e.target instanceof Element && e.target.closest("button, a[href], input, select, textarea, [contenteditable='true']");
     const inDialog = !!document.querySelector("[aria-modal='true']");
-    if (e.metaKey && e.key === ",") { e.preventDefault(); openPrefs(); return; }
-    if (e.metaKey && e.key === "f") { e.preventDefault(); searchEl?.focus(); searchEl?.select(); return; }
-    if (e.metaKey && e.key === "b") { e.preventDefault(); toggleBrowser(); return; }
+    if (mod(e) && e.key === ",") { e.preventDefault(); openPrefs(); return; }
+    if (mod(e) && e.key === "f") { e.preventDefault(); searchEl?.focus(); searchEl?.select(); return; }
+    if (mod(e) && e.key === "b") { e.preventDefault(); toggleBrowser(); return; }
     if (onControl || inDialog || prefsOpen || smartId !== undefined || dlg.current) return;
     const cur = rows.findIndex((s) => s.id === st.selected);
     const sel = (i) => { if (rows.length && st.mode !== "grid") st.selected = rows[Math.max(0, Math.min(rows.length - 1, i))].id; };
     if (e.key === " ") { e.preventDefault(); togglePlay(rows); }
-    else if (e.metaKey && e.key === "ArrowRight") { e.preventDefault(); step(1); }
-    else if (e.metaKey && e.key === "ArrowLeft") { e.preventDefault(); previous(); }
-    else if (e.metaKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); setVolume(st.volume + (e.key === "ArrowUp" ? 0.1 : -0.1)); }
+    else if (mod(e) && e.key === "ArrowRight") { e.preventDefault(); step(1); }
+    else if (mod(e) && e.key === "ArrowLeft") { e.preventDefault(); previous(); }
+    else if (mod(e) && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); setVolume(st.volume + (e.key === "ArrowUp" ? 0.1 : -0.1)); }
     else if (e.key === "ArrowDown") { e.preventDefault(); sel(cur + 1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); sel(cur < 0 ? 0 : cur - 1); }
     else if (e.key === "Enter" && cur >= 0) { e.preventDefault(); play(rows[cur].id, rows.filter((r) => !r.deviceOnly).map((r) => r.id)); }

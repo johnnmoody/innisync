@@ -79,13 +79,18 @@
     catch (e) { backupText = `The backup didn't finish: ${e.message}`; backupErr = true; }
     busy = false;
   }
+  const INSTALL_STEP = {
+    darwin: "Drag it to Applications in the window that opened, then click Reflash again.",
+    win32: "Its installer is open: install it, then click Reflash again.",
+    linux: "It's open. Follow its steps; InniSync finds the Y1 again when it's back.",
+  };
   async function reflash() {
     busy = true; reflashErr = false; reflashText = "Backing up your Y1, then opening Innioasis Updater CE…";
     try {
       const r = await api("/api/updaterce/open", {});
       reflashText = (r.backup ? `Backed up as ${r.backup}. ` : "") + (r.opened === "app"
         ? "Innioasis Updater CE is open. Follow its steps; InniSync finds the Y1 again when it's back."
-        : `Innioasis Updater CE ${r.tag} is downloaded and checked. Drag it to Applications in the window that opened, then click Reflash again.`);
+        : `Innioasis Updater CE ${r.tag} is downloaded and checked. ${INSTALL_STEP[st.prefs?.platform] || INSTALL_STEP.linux}`);
       loadBackups();
     } catch (e) { reflashText = e.message; reflashErr = true; }
     busy = false;

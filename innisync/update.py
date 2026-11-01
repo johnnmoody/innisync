@@ -13,11 +13,12 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
 
-from . import backup, device, sync, tools
+from . import backup, device, sync, system, tools
 
 PLAYERS = {
     device.ORIGINAL: {"name": "InniClassic", "repo": "FabianZettl/inniclassic", "asset": r"InniClassic-[\d.]+\.apk"},
@@ -63,7 +64,8 @@ def check(installed, force=False):
     rel = latest_release(pkg, force)
     name = PLAYERS[pkg]["name"]
     newer = bool(installed) and _ver(rel["version"]) > _ver(installed)
-    next_check = time.strftime("%A, %B %-d", time.localtime(_cache[pkg]["at"] + CHECK_EVERY))
+    when = time.localtime(_cache[pkg]["at"] + CHECK_EVERY)
+    next_check = time.strftime("%A, %B ", when) + str(when.tm_mday)   # %-d isn't available on Windows
     if not installed:
         msg = f"InniClassic isn't installed on your Y1. The latest version is {rel['version']}."
     elif newer:
@@ -224,8 +226,15 @@ UPDATER_ID = "com.innioasis.updater"
 _updater = {"at": 0, "release": None}
 
 
+# what Updater CE ships for each system (release assets of y1-community/Innioasis-Updater)
+UPDATER_ASSET = {"darwin": r".*\.dmg", "win32": r"installer\.exe", "linux": r".*\.AppImage"}
+
+
 def updater_app():
-    """(path, version) of Innioasis Updater on this computer, or (None, None)."""
+    """(path, version) of Innioasis Updater installed on this Mac, or (None, None). Elsewhere InniSync can't tell
+    whether it's installed, so it downloads the installer (Windows) or the AppImage (Linux) and runs that."""
+    if not system.MAC:
+        return None, None
     found = subprocess.run(["mdfind", f"kMDItemCFBundleIdentifier == '{UPDATER_ID}'"], capture_output=True, text=True,
                            timeout=20).stdout.split("\n")
     for path in [p for p in found if p.endswith(".app")] + ["/Applications/Innioasis Updater.app",
@@ -239,19 +248,20 @@ def updater_app():
 
 
 def updater_release(force=False):
-    """Latest Updater CE release's Mac DMG: {tag, name, url, size, sha256}."""
+    """Latest Updater CE release's download for this system: {tag, name, url, size, sha256}."""
     if not force and _updater["release"] and time.time() - _updater["at"] < CHECK_EVERY:
         return _updater["release"]
     req = urllib.request.Request(f"https://api.github.com/repos/{UPDATER_REPO}/releases/latest",
                                  headers={"Accept": "application/vnd.github+json", "User-Agent": "InniSync"})
     with urllib.request.urlopen(req, timeout=20) as r:
         rel = json.load(r)
-    dmg = next((a for a in rel.get("assets", []) if a["name"].endswith(".dmg")), None)
-    if not dmg:
-        raise device.DeviceError(f"Innioasis Updater {rel.get('tag_name')} has no Mac download")
-    digest = dmg.get("digest") or ""
+    pattern = UPDATER_ASSET.get(sys.platform, UPDATER_ASSET["linux"])
+    asset = next((a for a in rel.get("assets", []) if re.fullmatch(pattern, a["name"])), None)
+    if not asset:
+        raise device.DeviceError(f"Innioasis Updater {rel.get('tag_name')} has no download for this computer")
+    digest = asset.get("digest") or ""
     _updater.update(at=time.time(), release={
-        "tag": rel["tag_name"], "name": dmg["name"], "url": dmg["browser_download_url"], "size": dmg["size"],
+        "tag": rel["tag_name"], "name": asset["name"], "url": asset["browser_download_url"], "size": asset["size"],
         "sha256": digest.removeprefix("sha256:") if digest.startswith("sha256:") else None, "page": rel.get("html_url")})
     return _updater["release"]
 
@@ -266,17 +276,22 @@ def updater_status():
 
 
 def open_updater(info):
-    """Back up the Y1 (if it's connected), then open Updater CE, or download its DMG and open that to install it.
-    Returns {"opened": "app"|"dmg", "backup": name or None}."""
+    """Back up the Y1 (if it's connected), then open Updater CE: the installed app on a Mac, or else its download
+    (Mac DMG, Windows installer, Linux AppImage), checked against GitHub's checksum first.
+    Returns {"opened": "app"|"installer", "backup": name or None}."""
     b = None
     if info.get("connected"):
         b = backup.create(info, reason="before reflashing")["name"]
         backup.prune(info["serial"])
     path, _ = updater_app()
     if path:
-        subprocess.run(["open", path], check=True, timeout=30)
+        system.open_path(path)
         return {"opened": "app", "backup": b}
     rel = updater_release(force=True)
-    dmg = download(rel | {"version": rel["tag"]})   # same checked download as InniClassic's APK
-    subprocess.run(["open", dmg], check=True, timeout=60)
-    return {"opened": "dmg", "backup": b, "tag": rel["tag"]}
+    got = download(rel | {"version": rel["tag"]})   # same checked download as the player's APK
+    if system.LINUX:
+        os.chmod(got, 0o755)
+        subprocess.Popen([got], start_new_session=True)   # an AppImage runs as it is
+    else:
+        system.open_path(got)
+    return {"opened": "installer", "backup": b, "tag": rel["tag"]}

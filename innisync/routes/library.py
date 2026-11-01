@@ -1,9 +1,10 @@
 """Preferences, signing in to the music server, the library, playlists (smart ones too) and similar songs."""
 import os
+import sys
 import threading
 import time
 
-from .. import jellyfin, smart, soundalike, subsonic, sync
+from .. import __version__, jellyfin, smart, soundalike, subsonic, sync, system
 from ..jellyfin import NotSignedIn
 from ..state import LIB_CACHE, S, load_prefs, save_prefs
 from . import get, post
@@ -11,7 +12,7 @@ from . import get, post
 
 @get("/api/prefs")
 def prefs(r):
-    return load_prefs() | {"log": os.path.expanduser("~/Library/Logs/InniSync.log")}
+    return load_prefs() | {"log": system.log_path(), "version": __version__, "platform": sys.platform}
 
 
 @post("/api/prefs")

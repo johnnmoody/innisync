@@ -1,4 +1,4 @@
-"""Sync over Wi-Fi: the Y1's adbd on TCP, locked to this Mac.
+"""Sync over Wi-Fi: the Y1's adbd on TCP, locked to this computer.
 
 This Y1's firmware runs adbd as root with key checks off (ro.adb.secure unset), so open adb on the network would be a
 root shell for anyone on the LAN. So before TCP is switched on, an iptables chain on the Y1 drops port 5555 from
@@ -10,7 +10,7 @@ port open.
 Android 4.2.2's adbd (system/core/adb/adb.c) listens on USB and, when service.adb.tcp.port is set, on TCP as well;
 `setprop ctl.restart adbd` has init restart it. Neither the property nor the firewall survives a reboot, so rebooting
 the Y1 always puts it back to USB only. The allow-list is refreshed every time InniSync reaches the Y1, so it follows
-this Mac between networks while it can still connect; if it can't, plug in the cable.
+this computer between networks while it can still connect; if it can't, plug in the cable.
 
 What it's good for, measured on a Y1 (2026-10-31): seeing the Y1 (status, battery) and sending play counts. Bulk data
 doesn't work: adb push managed 0.06 MB/s, and even a raw TCP stream to busybox nc stalled at ~30 KB/s, screen on,
@@ -24,7 +24,7 @@ import subprocess
 import threading
 import time
 
-from . import device, files, sync
+from . import device, files, sync, system
 
 PORT = 5555
 CHAIN = "innisync_adb"
@@ -43,10 +43,19 @@ def _save(st):
     files.write_json(STATE, st, indent=1)
 
 
-def mac_ips():
-    """This Mac's IPv4 addresses (not loopback)."""
-    out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=10).stdout
-    return sorted({ip for ip in re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", out) if not ip.startswith("127.")})
+def local_ips():
+    """This computer's IPv4 addresses (not loopback), for finding the Y1 on the local networks."""
+    if system.WINDOWS:
+        cmd, pattern = ["ipconfig"], r"IPv4[^:]*:\s*(\d+\.\d+\.\d+\.\d+)"
+    elif system.MAC:
+        cmd, pattern = ["ifconfig"], r"inet (\d+\.\d+\.\d+\.\d+)"
+    else:
+        cmd, pattern = ["ip", "-4", "-o", "addr"], r"inet (\d+\.\d+\.\d+\.\d+)"
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    except OSError:
+        out = ""
+    return sorted({ip for ip in re.findall(pattern, out) if not ip.startswith("127.")})
 
 
 def y1_wifi():
@@ -59,7 +68,7 @@ def y1_wifi():
 
 
 def _macs_seen_by_y1(ips):
-    """MAC addresses the Y1 has for this Mac's IPs (it pings them first so they're in its ARP table)."""
+    """MAC addresses the Y1 has for this computer's IPs (it pings them first so they're in its ARP table)."""
     device.shell("; ".join(f"ping -c 1 -W 1 {ip} >/dev/null 2>&1" for ip in ips) + "; true", timeout=30)
     macs = set()
     for line in device.shell("cat /proc/net/arp").splitlines()[1:]:
@@ -165,7 +174,7 @@ def disable(serial):
 
 def _restart_adbd(port):
     """Set adbd's TCP port and have init restart it. The shell carrying the command dies with the old adbd, and the
-    Mac's adb server keeps a dead USB session afterwards (seen on this Y1: commands hang), so that one is allowed to
+    computer's adb server keeps a dead USB session afterwards (seen on this Y1: commands hang), so that one is allowed to
     time out and the adb server is restarted to pick the Y1 up fresh."""
     try:
         device.shell(f"setprop service.adb.tcp.port {port}; setprop ctl.restart adbd", timeout=6)
@@ -216,10 +225,10 @@ def _open(ip, timeout=0.5):
 
 
 def _candidates():
-    """Every address on this Mac's /24 networks with port 5555 open (the Y1's firewall answers only this Mac)."""
+    """Every address on this computer's /24 networks with port 5555 open (the Y1's firewall answers only this computer)."""
     from concurrent.futures import ThreadPoolExecutor
     hosts = []
-    for ip in mac_ips():
+    for ip in local_ips():
         net = ip.rsplit(".", 1)[0]
         hosts += [f"{net}.{n}" for n in range(1, 255) if f"{net}.{n}" != ip]
     with ThreadPoolExecutor(64) as pool:
