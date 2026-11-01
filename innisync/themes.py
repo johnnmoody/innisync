@@ -6,7 +6,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from . import device, sync
+from . import device, files, sync
 
 CATALOG_REPO = "y1-community/InnioasisY1Themes"   # community themes for the Y1's original firmware
 CATALOG_CACHE = os.path.join(sync.APP_DIR, "theme_catalog.json")
@@ -16,7 +16,7 @@ def catalog():
     """The community theme index (themes.json), cached for a day."""
     try:
         if time.time() - os.path.getmtime(CATALOG_CACHE) < 86400:
-            return json.load(open(CATALOG_CACHE))
+            return files.read_json(CATALOG_CACHE)
     except (OSError, ValueError):
         pass
     url = f"https://raw.githubusercontent.com/{CATALOG_REPO}/main/themes.json"
@@ -25,8 +25,7 @@ def catalog():
     themes = [{"name": t.get("name") or t["folder"], "folder": t["folder"], "author": t.get("author") or "",
                "description": t.get("description") or "", "screenshot": (t.get("screenshot") or "").removeprefix("./")}
               for t in data.get("themes", []) if t.get("folder")]
-    os.makedirs(sync.APP_DIR, exist_ok=True)
-    json.dump(themes, open(CATALOG_CACHE, "w"))
+    files.write_json(CATALOG_CACHE, themes)
     return themes
 
 
@@ -85,7 +84,8 @@ def install_zip(data):
                 continue
             dest = os.path.join(root, *rel.split("/"))
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            open(dest, "wb").write(z.read(n))
+            with open(dest, "wb") as f:
+                f.write(z.read(n))
         device.push_folder(root, f"{device.INNI_THEMES}/{folder}")
     return meta.get("name") or folder
 
@@ -96,7 +96,8 @@ def make_wallpaper(data):
     import tempfile
     work = tempfile.mkdtemp(prefix="innisync-wp-")
     src, out = os.path.join(work, "src"), os.path.join(work, "wallpaper.jpg")
-    open(src, "wb").write(data)
+    with open(src, "wb") as f:
+        f.write(data)
     dims = subprocess.run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", src], capture_output=True, text=True).stdout
     try:
         w = int(dims.split("pixelWidth:")[1].split()[0])

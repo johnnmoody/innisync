@@ -175,6 +175,44 @@ def set_launcher(pkg):
     PLAYER_PREFS = f"{PREFS_DIR}/Y1_SETTINGS.xml"
 
 
+def package_installed(pkg):
+    """Installed at all, enabled or not."""
+    return f"package:{pkg}" in shell(f"pm list packages {pkg}").split()
+
+
+def switch_player(pkg):
+    """Make `pkg` (ORIGINAL or AUTOPLAY, both installed) the Y1's player: enable it, disable the other so it's the
+    only home app (no "Complete action using" chooser after a reboot), and restart. Disabling keeps an app's settings.
+    The first time Autoplay is used it gets a copy of the original's settings."""
+    other = ORIGINAL if pkg == AUTOPLAY else AUTOPLAY
+    if not package_installed(pkg):
+        raise DeviceError(f"{pkg} isn't installed on the Y1")
+    enabled = lambda p: f"package:{p}" in shell(f"pm list packages -e {p}").split()
+    shell(f"am force-stop {ORIGINAL}; am force-stop {AUTOPLAY}; pm enable {pkg}")
+    if not enabled(pkg):   # pm's exit status isn't reliable on this Android, so the result is read back
+        raise DeviceError(f"The Y1 didn't turn on {pkg}. Nothing else was changed.")
+    if pkg == AUTOPLAY and not exists(f"/data/data/{AUTOPLAY}/shared_prefs/Y1_SETTINGS.xml"):
+        _copy_settings(ORIGINAL, AUTOPLAY)
+    if package_installed(other):
+        shell(f"pm disable {other}")
+        if enabled(other):
+            raise DeviceError(f"The Y1 didn't turn off {other}, so it has two player apps. Try again.")
+    set_launcher(pkg)
+    restart_player()
+
+
+def _copy_settings(src_pkg, dest_pkg):
+    """The player's settings files from one package to the other, owned by the receiving app."""
+    copy_prefs(f"/data/data/{src_pkg}/shared_prefs", f"/data/data/{dest_pkg}/shared_prefs", *app_owner(dest_pkg))
+
+
+def copy_prefs(src, dest, uid, gid):
+    shell_ok(f'rc=0; mkdir -p {dest} && chown {uid}:{gid} {dest} && chmod 771 {dest} || rc=1; '
+             f'for f in {src}/*.xml; do [ -e "$f" ] || continue; n="${{f##*/}}"; '
+             f'{{ cat "$f" > "{dest}/$n" && chown {uid}:{gid} "{dest}/$n" && chmod 660 "{dest}/$n"; }} || rc=1; done; '
+             f'[ $rc = 0 ]')
+
+
 def set_name(name):
     shell(f"setprop persist.innisync.name {q(name)}")
 
@@ -375,7 +413,8 @@ def cat_bytes(path):
     with tempfile.TemporaryDirectory(prefix="innisync-pull-") as d:
         local = os.path.join(d, "f")
         adb("pull", path, local, timeout=120)
-        return open(local, "rb").read()
+        with open(local, "rb") as f:
+            return f.read()
 
 
 def restart_player():
@@ -421,9 +460,9 @@ def set_player_prefs(changes):
         if val is None:
             continue
         if isinstance(val, bool):
-            el = ET.SubElement(root, "boolean", name=key, value="true" if val else "false")
+            ET.SubElement(root, "boolean", name=key, value="true" if val else "false")
         elif isinstance(val, int):
-            el = ET.SubElement(root, "int", name=key, value=str(val))
+            ET.SubElement(root, "int", name=key, value=str(val))
         else:
             el = ET.SubElement(root, "string", name=key)
             el.text = str(val)

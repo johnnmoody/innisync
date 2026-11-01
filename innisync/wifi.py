@@ -18,14 +18,13 @@ RSSI -46, link 65 Mbps, ping ~9 ms; 1472-byte pings lose half their packets, and
 So file-moving jobs say "connect by USB". The Y1 also rejoins Wi-Fi with a new random MAC and DHCP address now and
 then (4 addresses in 20 minutes), which is why reconnect() scans for it.
 """
-import json
 import os
 import re
 import subprocess
 import threading
 import time
 
-from . import device, sync
+from . import device, files, sync
 
 PORT = 5555
 CHAIN = "innisync_adb"
@@ -35,14 +34,13 @@ STATE = os.path.join(sync.APP_DIR, "wifi.json")   # serial -> {"ip": last Wi-Fi 
 
 def _load():
     try:
-        return json.load(open(STATE))
+        return files.read_json(STATE)
     except (OSError, ValueError):
         return {}
 
 
 def _save(st):
-    os.makedirs(sync.APP_DIR, exist_ok=True)
-    json.dump(st, open(STATE, "w"), indent=1)
+    files.write_json(STATE, st, indent=1)
 
 
 def mac_ips():

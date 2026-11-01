@@ -1,9 +1,12 @@
-"""InniClassic updates, iTunes-style: check GitHub for a newer release, download it, check its digest and signer,
-back up the Y1, then `adb install -r` it in place.
+"""The Y1's player app, iTunes-style: check GitHub for a newer release, download it, check its digest and signer,
+back up the Y1, then `adb install -r` it in place. Two player apps are known (PLAYERS): InniClassic, and InniClassic
+Autoplay (InniSync's build of it, a separate package). A Y1 on InniClassic can switch to Autoplay: it is installed
+beside the original, takes a copy of the original's settings, and the original is disabled (not removed, so its
+settings stay) so Autoplay is the Y1's only home app. Switching back enables the original and disables Autoplay.
 
-Every InniClassic release is signed with the same debug key, so installing over the old one keeps its settings.
-If Android ever says INSTALL_FAILED_UPDATE_INCOMPATIBLE (a different key), InniSync stops: getting past that means
-uninstalling, which erases the player's settings, and that's the owner's call, not ours.
+Each app's releases are signed with one key, so installing over the old copy keeps its settings. If Android ever says
+INSTALL_FAILED_UPDATE_INCOMPATIBLE (a different key), InniSync stops: getting past that means uninstalling, which
+erases the player's settings, and that's the owner's call, not ours.
 """
 import hashlib
 import json
@@ -16,57 +19,69 @@ import urllib.request
 
 from . import backup, device, sync, tools
 
-REPO = "FabianZettl/inniclassic"
+PLAYERS = {
+    device.ORIGINAL: {"name": "InniClassic", "repo": "FabianZettl/inniclassic", "asset": r"InniClassic-[\d.]+\.apk"},
+    device.AUTOPLAY: {"name": "InniClassic Autoplay", "repo": "johnnmoody/inniclassic-autoplay",
+                      "asset": r"InniClassic-Autoplay-[\d.]+-autoplay\d+\.apk"},
+}
 APK_DIR = os.path.join(sync.APP_DIR, "updates")
 CHECK_EVERY = 24 * 3600
 INCOMPATIBLE = "INSTALL_FAILED_UPDATE_INCOMPATIBLE"
 
-_cache = {"at": 0, "release": None}
+_cache = {}   # package -> {"at", "release"}
 
 
 def _ver(v):
     return [int(x) for x in re.findall(r"\d+", v or "")]
 
 
-def latest_release(force=False):
-    """Newest InniClassic release with an APK: {version, name, url, size, sha256, published, page}."""
-    if not force and _cache["release"] and time.time() - _cache["at"] < CHECK_EVERY:
-        return _cache["release"]
-    req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases/latest",
+def latest_release(pkg, force=False):
+    """Newest release of that player app with an APK: {pkg, app, version, name, url, size, sha256, published, page}."""
+    hit = _cache.get(pkg)
+    if not force and hit and time.time() - hit["at"] < CHECK_EVERY:
+        return hit["release"]
+    app = PLAYERS[pkg]
+    req = urllib.request.Request(f"https://api.github.com/repos/{app['repo']}/releases/latest",
                                  headers={"Accept": "application/vnd.github+json", "User-Agent": "InniSync"})
     with urllib.request.urlopen(req, timeout=20) as r:
         rel = json.load(r)
-    asset = next((a for a in rel.get("assets", []) if re.fullmatch(r"InniClassic-[\d.]+\.apk", a["name"])), None)
+    asset = next((a for a in rel.get("assets", []) if re.fullmatch(app["asset"], a["name"])), None)
     if not asset:
-        raise device.DeviceError(f"InniClassic {rel.get('tag_name')} has no APK to install")
+        raise device.DeviceError(f"{app['name']} {rel.get('tag_name')} has no APK to install")
     digest = asset.get("digest") or ""
-    _cache.update(at=time.time(), release={
-        "version": rel["tag_name"].lstrip("v"), "name": asset["name"], "url": asset["browser_download_url"],
-        "size": asset["size"], "sha256": digest.removeprefix("sha256:") if digest.startswith("sha256:") else None,
-        "published": rel.get("published_at"), "page": rel.get("html_url")})
-    return _cache["release"]
+    release = {"pkg": pkg, "app": app["name"], "version": rel["tag_name"].lstrip("v"), "name": asset["name"],
+               "url": asset["browser_download_url"], "size": asset["size"],
+               "sha256": digest.removeprefix("sha256:") if digest.startswith("sha256:") else None,
+               "published": rel.get("published_at"), "page": rel.get("html_url")}
+    _cache[pkg] = {"at": time.time(), "release": release}
+    return release
 
 
 def check(installed, force=False):
-    rel = latest_release(force)
+    """What the Summary tab says about the Y1's player app, and whether Update (or Switch) has something to do."""
+    pkg = device.LAUNCHER
+    rel = latest_release(pkg, force)
+    name = PLAYERS[pkg]["name"]
     newer = bool(installed) and _ver(rel["version"]) > _ver(installed)
-    next_check = time.strftime("%A, %B %-d", time.localtime(_cache["at"] + CHECK_EVERY))
-    if installed and device.LAUNCHER == device.AUTOPLAY:
-        # InniSync's own build: GitHub's APK is the plain player under another package, so it isn't installed over it
-        msg = (f"Your Y1 runs InniClassic Autoplay {installed}, InniSync's build of the player. "
-               + (f"InniClassic {rel['version']} is out: rebuild InniClassic Autoplay from it to update."
-                  if _ver(rel["version"]) > _ver(installed.split("-")[0]) else "It's based on the latest InniClassic."))
-        newer = False
-    elif not installed:
+    next_check = time.strftime("%A, %B %-d", time.localtime(_cache[pkg]["at"] + CHECK_EVERY))
+    if not installed:
         msg = f"InniClassic isn't installed on your Y1. The latest version is {rel['version']}."
     elif newer:
-        msg = (f"A newer version of the Y1 software is available (InniClassic {rel['version']}). You may update "
+        msg = (f"A newer version of the Y1 software is available ({name} {rel['version']}). You may update "
                f"your Y1 to the latest version by clicking on the Update button.")
     else:
-        msg = (f"Your Y1 software (InniClassic {installed}) is up to date. InniSync will automatically check for an "
+        msg = (f"Your Y1 software ({name} {installed}) is up to date. InniSync will automatically check for an "
                f"update again on {next_check}.")
-    return {"latest": rel["version"], "installed": installed, "update": newer, "message": msg,
-            "published": rel["published"], "page": rel["page"]}
+    out = {"app": name, "latest": rel["version"], "installed": installed, "update": newer, "message": msg,
+           "published": rel["published"], "page": rel["page"]}
+    if installed and pkg == device.ORIGINAL:   # offer InniSync's build: same player, plus Autoplay
+        try:
+            alt = latest_release(device.AUTOPLAY, force)
+            out["autoplay"] = {"version": alt["version"], "page": alt["page"],
+                               "installed": device.package_installed(device.AUTOPLAY)}
+        except Exception:
+            pass   # no offer this time; the update check itself still answers
+    return out
 
 
 def download(rel, progress=lambda done, total: None):
@@ -120,14 +135,15 @@ def apk_info(path):
 
 
 def preflight(apk, rel):
-    """Check the download is the InniClassic we expect and signed like the copy on the Y1, before touching it."""
+    """Check the download is the app we expect and signed like the copy on the Y1 (if there is one), before touching
+    anything."""
     new = apk_info(apk)
-    if new["package"] and new["package"] != device.LAUNCHER:
-        raise device.DeviceError(f"{rel['name']} is {new['package']}, not InniClassic")
+    if new["package"] and new["package"] != rel["pkg"]:
+        raise device.DeviceError(f"{rel['name']} is {new['package']}, not {rel['app']}")
     if new["version"] and new["version"] != rel["version"]:
         raise device.DeviceError(f"{rel['name']} says it's version {new['version']}, not {rel['version']}")
     have = None
-    remote = device.installed_apk()
+    remote = device.installed_apk(rel["pkg"])
     if remote and new["signer"]:
         local = os.path.join(APK_DIR, "installed.apk")
         device.pull(remote, local, timeout=300)
@@ -140,18 +156,19 @@ def preflight(apk, rel):
     return {"apk": apk, "signer": new["signer"], "installed_signer": have, "same_signer": have == new["signer"] if have else None}
 
 
-def incompatible_message(version):
-    return (f"InniClassic {version} is signed with a different key than the copy on your Y1, so it can't be "
-            f"installed over it. InniSync left your Y1 as it was. Installing it would mean removing InniClassic first, "
+def incompatible_message(rel):
+    return (f"{rel['app']} {rel['version']} is signed with a different key than the copy on your Y1, so it can't be "
+            f"installed over it. InniSync left your Y1 as it was. Installing it would mean removing {rel['app']} first, "
             f"which erases its settings: back up first, then do that by hand if you want to.")
 
 
 class UpdateJob:
-    """Download, verify, back up, install. dry_run stops after the checks and says what it would run."""
+    """Download, verify, back up, install. With switch=True, a Y1 on InniClassic gets InniClassic Autoplay instead
+    (see the module notes). dry_run stops after the checks and says what it would do."""
     ACTIVE = ("starting", "downloading", "verifying", "backing_up", "installing")
 
-    def __init__(self, info, dry_run=False):
-        self.info, self.dry_run = info, dry_run
+    def __init__(self, info, dry_run=False, switch=False):
+        self.info, self.dry_run, self.switch = info, dry_run, switch
         self.status = {"state": "starting", "message": "Checking for the latest version", "done": 0, "total": 0,
                        "dryRun": dry_run}
 
@@ -163,31 +180,39 @@ class UpdateJob:
         self.status = {**self.status, **kw}   # a new dict, so the server never serializes one mid-change
 
     def _run(self):
+        rel = None
         try:
-            if device.LAUNCHER == device.AUTOPLAY:
-                return self._set(state="error", message="Your Y1 runs InniClassic Autoplay; it updates by being rebuilt, not from GitHub.")
-            rel = latest_release(force=True)
-            if not self.dry_run and _ver(rel["version"]) <= _ver(self.info.get("launcher")):
-                return self._set(state="done", message=f"Your Y1 already has InniClassic {self.info.get('launcher')}")
-            self._set(state="downloading", message=f"Downloading InniClassic {rel['version']}", total=rel["size"])
+            if self.switch and device.LAUNCHER != device.ORIGINAL:
+                return self._set(state="done", message="Your Y1 already runs InniClassic Autoplay")
+            pkg = device.AUTOPLAY if self.switch else device.LAUNCHER
+            rel = latest_release(pkg, force=True)
+            if not self.switch and not self.dry_run and _ver(rel["version"]) <= _ver(self.info.get("launcher")):
+                return self._set(state="done", message=f"Your Y1 already has {rel['app']} {self.info.get('launcher')}")
+            what = f"{rel['app']} {rel['version']}"
+            self._set(state="downloading", message=f"Downloading {what}", total=rel["size"])
             apk = download(rel, lambda d, t: self._set(done=d, total=t))
-            self._set(state="verifying", message="Verifying the update")
+            self._set(state="verifying", message="Verifying the download")
             check = preflight(apk, rel)
             if self.dry_run:
                 signer = {True: "same signer as the installed copy", False: "different signer",
                           None: "signer not compared"}[check["same_signer"]]
-                return self._set(state="done", message=f"Ready to install InniClassic {rel['version']} "
-                                 f"(checksum OK, {signer}). Would run: adb install -r {os.path.basename(apk)}",
-                                 preflight=check)
+                then = ", copy the player's settings to it, and make it the Y1's player" if self.switch else ""
+                return self._set(state="done", message=f"Ready to install {what} (checksum OK, {signer}). "
+                                 f"Would run: adb install -r {os.path.basename(apk)}{then}", preflight=check)
             self._set(state="backing_up", message="Backing up the Y1")
-            b = backup.create(self.info, reason=f"before InniClassic {rel['version']}")
+            b = backup.create(self.info, reason=f"before {what}")
             backup.prune(self.info["serial"])
-            self._set(state="installing", message=f"Installing InniClassic {rel['version']}", backup=b["name"])
+            self._set(state="installing", message=f"Installing {what}", backup=b["name"])
             device.install_apk(apk)
+            if self.switch:
+                device.switch_player(device.AUTOPLAY)
+                device.set_player_prefs({"autoplay": True})   # the reason to switch; it can be turned off in Settings
+                return self._set(state="done", installed=rel["version"],
+                                 message=f"Your Y1 now plays with {what}, with your settings. Autoplay is on.")
             device.restart_player()
-            self._set(state="done", message=f"Your Y1 now has InniClassic {rel['version']}", installed=rel["version"])
+            self._set(state="done", message=f"Your Y1 now has {what}", installed=rel["version"])
         except device.InstallError as e:
-            msg = incompatible_message(_cache["release"]["version"]) if e.code == INCOMPATIBLE else str(e)
+            msg = incompatible_message(rel) if e.code == INCOMPATIBLE and rel else str(e)
             self._set(state="error", message=msg, code=e.code)
         except Exception as e:
             self._set(state="error", message=str(e))

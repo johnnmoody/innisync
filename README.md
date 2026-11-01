@@ -25,8 +25,8 @@ from there: it only ever touches the songs it put on the Y1, never files you add
   will take before anything is copied. Lossless songs can be converted to 320 kbps MP3 so more fits.
 - **Mixes and similar songs:** InniSync listens to the songs on your Y1 and groups the ones that sound alike into
   mixes, or lists the songs that go with one you pick. Either can go to the Y1 as a playlist.
-- **Autoplay on the Y1:** with [InniClassic Autoplay](https://github.com/johnnmoody/inniclassic-autoplay) installed,
-  the Y1 keeps playing matching songs when its queue runs out.
+- **Autoplay on the Y1:** with [InniClassic Autoplay](https://github.com/johnnmoody/inniclassic-autoplay), which
+  InniSync installs for you in one click, the Y1 keeps playing matching songs when its queue runs out.
 - **Play counts:** plays logged on the Y1 are counted on your music server when you sync.
 - **Lyrics:** timed lyrics from your server, or looked up on [LRCLIB](https://lrclib.net), shown on the Y1's
   Now Playing screen.
@@ -105,8 +105,10 @@ Click the Y1 in the sidebar, then the **Music** tab.
 
 ### Mixes and Autoplay
 InniSync analyses how each song on your Y1 sounds, in the background on your computer. **Mixes** in the sidebar shows
-the groups it found; double-click one to play it. Sync mixes (Music tab) puts them on the Y1. With InniClassic
-Autoplay installed, turn on Autoplay in the Settings tab, and the Y1 carries on with matching songs when a queue ends.
+the groups it found; double-click one to play it. Sync mixes (Music tab) puts them on the Y1. For Autoplay, click
+**Use Autoplay** on the Summary tab: InniSync installs InniClassic Autoplay beside InniClassic, copies your settings to
+it and turns Autoplay on, and the Y1 carries on with matching songs when a queue ends. **Use InniClassic** switches
+back; each app keeps its own settings.
 
 ### Podcasts
 The **Podcasts** tab shows the Y1's own podcast subscriptions (the ones in InniClassic's Podcasts menu). Paste a feed
@@ -126,8 +128,10 @@ Click Apply; the player restarts to pick them up.
 
 ### Software and backups
 On the **Summary** tab:
-- **Check for Update / Update:** installs a newer InniClassic from GitHub, after backing up the Y1. Its settings are
+- **Check for Update / Update:** installs a newer version of the Y1's player app (InniClassic, or InniClassic
+  Autoplay) from GitHub, after backing up the Y1 and checking the download's checksum and signer. Its settings are
   kept.
+- **Use Autoplay / Use InniClassic:** switches the Y1 between the two player apps (see Mixes and Autoplay).
 - **Back Up:** saves the player's settings, playlists, library index and play log. Choose where in Preferences,
   Devices (a network drive works); InniSync can also back up automatically each time the Y1 connects.
 - **Restore:** puts settings and playlists back from a backup. The Y1 is backed up first.
@@ -150,8 +154,10 @@ On the **Summary** tab:
 - **The Y1 doesn't appear.** Check `adb devices` lists it. If not, try another cable or USB port; a charge-only cable
   won't work.
 - **Switching music servers.** Sync keeps the Y1 matching the library you're signed in to. If you sign in to a
-  different server, the next sync removes the songs that came from the old one. The space preview on the Music tab
-  shows this before you click Sync.
+  different server, the next sync replaces the songs that came from the old one. A sync that would take most of the
+  Y1's songs off stops and asks first (**Remove and Sync**), in case the server was offline or still scanning.
+- **A sync had problems.** Click **Show Problems** at the top. Songs that didn't copy are tried again next sync, and
+  a song is only removed from the Y1 once its replacement is safely there.
 - **Songs are missing on the Y1.** Click Rescan Library on the Summary tab.
 - **The Y1's clock is wrong** (it resets when the battery runs flat). A Fix Clock button appears on the Summary tab.
 - **Over Wi-Fi, nothing copies.** That's expected: the Y1's Wi-Fi is too slow for music. Plug it in to sync.

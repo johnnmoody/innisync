@@ -10,6 +10,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import files
+
 # where InniSync keeps its settings and caches; INNISYNC_DATA points a second copy (development, demos) elsewhere
 APP_DIR = os.path.expanduser(os.environ.get("INNISYNC_DATA") or "~/Library/Application Support/InniSync")
 CONFIG = os.path.join(APP_DIR, "jellyfin.json")      # server URL + signed-in user (no secrets)
@@ -27,14 +29,13 @@ class NotSignedIn(Exception):
 
 def load_config():
     try:
-        return json.load(open(CONFIG))
+        return files.read_json(CONFIG)
     except (OSError, ValueError):
         return {"server": DEFAULT_SERVER}
 
 
 def save_config(cfg):
-    os.makedirs(APP_DIR, exist_ok=True)
-    json.dump(cfg, open(CONFIG, "w"), indent=1)
+    files.write_json(CONFIG, cfg, indent=1)
 
 
 def _keychain(action, account, token=None):

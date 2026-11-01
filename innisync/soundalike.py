@@ -3,7 +3,6 @@
 The Y1 is far too slow to judge similarity, so the thinking happens here and the results go to the Y1 as playlists.
 Only songs on the Y1 are matched, since the next song has to be on the device.
 """
-import json
 import os
 import subprocess
 import threading
@@ -13,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from . import sync
+from . import files, sync
 
 FEATURES = os.path.join(sync.APP_DIR, "soundalike_features.json")
 SR = 22050
@@ -230,16 +229,13 @@ class Analyzer:
 
     def _load(self):
         try:
-            data = json.load(open(FEATURES))
+            data = files.read_json(FEATURES)
             return data["songs"] if data.get("version") == VERSION else {}
         except (OSError, ValueError, KeyError):
             return {}
 
     def _save(self):
-        os.makedirs(sync.APP_DIR, exist_ok=True)
-        tmp = FEATURES + ".tmp"
-        json.dump({"version": VERSION, "songs": self.feats}, open(tmp, "w"))
-        os.replace(tmp, FEATURES)
+        files.write_json(FEATURES, {"version": VERSION, "songs": self.feats})
 
     def start(self, jf, lib, ids):
         """Analyze any of `ids` not done yet. Safe to call often; only one run at a time."""

@@ -92,7 +92,9 @@ class Handler(BaseHTTPRequestHandler):
         full = os.path.realpath(os.path.join(web, path.lstrip("/") or "index.html"))
         if os.path.commonpath([full, web]) != web or not os.path.isfile(full):
             return self.send_json({"error": "not found"}, 404)
-        self.send_bytes(open(full, "rb").read(), mimetypes.guess_type(full)[0] or "application/octet-stream", "no-cache")
+        with open(full, "rb") as f:
+            data = f.read()
+        self.send_bytes(data, mimetypes.guess_type(full)[0] or "application/octet-stream", "no-cache")
 
 
 def serve(port=8765):

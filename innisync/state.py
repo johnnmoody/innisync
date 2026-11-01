@@ -1,11 +1,10 @@
 """What the local server keeps between requests: preferences, the signed-in music server and its library (cached on
 disk for an instant start), the connected Y1, and the jobs running on it."""
-import json
 import os
 import threading
 import time
 
-from . import backup, device, smart, soundalike, sync, update, wifi
+from . import backup, device, files, smart, soundalike, sync, update, wifi
 from .jellyfin import Jellyfin
 from .subsonic import Subsonic
 
@@ -16,15 +15,14 @@ DEFAULT_PREFS = {"backend": "jellyfin", "auto_sync": False, "auto_backup": True,
 
 def load_prefs():
     try:
-        return {**DEFAULT_PREFS, **json.load(open(PREFS))}
+        return {**DEFAULT_PREFS, **files.read_json(PREFS)}
     except (OSError, ValueError):
         return dict(DEFAULT_PREFS)
 
 
 def save_prefs(p):
-    os.makedirs(sync.APP_DIR, exist_ok=True)
     clean = {k: p.get(k, v) for k, v in DEFAULT_PREFS.items()}
-    json.dump(clean, open(PREFS, "w"), indent=1)
+    files.write_json(PREFS, clean, indent=1)
     backup.set_folder(clean["backup_folder"])
     return clean
 
@@ -62,10 +60,7 @@ class State:
             items = dict(zip([p["id"] for p in playlists], pool.map(lambda p: jf.playlist_items(p["id"]), playlists)))
             songs = songs_f.result()
         data = {"user": jf.user_id, "songs": songs, "playlists": playlists, "playlistItems": items, "at": time.time()}
-        os.makedirs(sync.APP_DIR, exist_ok=True)
-        tmp = LIB_CACHE + ".tmp"
-        json.dump(data, open(tmp, "w"))
-        os.replace(tmp, LIB_CACHE)
+        files.write_json(LIB_CACHE, data)
         return data
 
     def _apply(self, data):
@@ -87,7 +82,7 @@ class State:
             elif self.lib is None:
                 cached = None
                 try:
-                    cached = json.load(open(LIB_CACHE))
+                    cached = files.read_json(LIB_CACHE)
                 except (OSError, ValueError):
                     pass
                 if cached and cached.get("user") == self.jf.user_id:

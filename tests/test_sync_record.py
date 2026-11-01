@@ -89,4 +89,5 @@ def test_convert_changes_the_path_so_the_song_is_replaced_not_removed():
 
 def test_saved_settings_keep_only_known_keys():
     s = sync.save_settings("T", {**sync.DEFAULT_SETTINGS, "mode": "all", "junk": 1})
-    assert "junk" not in s and json.load(open(sync.settings_path("T")))["mode"] == "all"
+    with open(sync.settings_path("T")) as f:
+        assert "junk" not in s and json.load(f)["mode"] == "all"

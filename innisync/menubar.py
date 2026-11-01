@@ -152,7 +152,7 @@ class _Controller(NSObject):
         self.window.destroy()
 
 
-_controller = None
+_controller = None   # held for the life of the app: without a reference the menu-bar item is garbage-collected
 
 
 def install(port, window):

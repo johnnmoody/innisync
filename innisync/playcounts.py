@@ -10,10 +10,9 @@ last-played date (a newer play on another device would otherwise be pushed back)
 clock was reset (before 2025) count, but don't move the date.
 """
 import datetime
-import json
 import os
 
-from . import device, sync
+from . import device, files, sync
 from .jellyfin import norm
 
 CLOCK_OK = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc)
@@ -25,17 +24,13 @@ def state_path(serial):
 
 def load_state(serial):
     try:
-        return json.load(open(state_path(serial)))
+        return files.read_json(state_path(serial))
     except (OSError, ValueError):
         return {"sent": [], "unmatched": []}
 
 
 def save_state(serial, st):
-    os.makedirs(sync.APP_DIR, exist_ok=True)
-    tmp = state_path(serial) + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(st, f)
-    os.replace(tmp, state_path(serial))
+    files.write_json(state_path(serial), st)
 
 
 def parse(text):

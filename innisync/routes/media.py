@@ -155,7 +155,8 @@ def add_chapter(r):
     data = r.raw()
     with tempfile.TemporaryDirectory(prefix="innisync-book-") as work:
         src = os.path.join(work, "src" + ext)
-        open(src, "wb").write(data)
+        with open(src, "wb") as f:
+            f.write(data)
         if ext == ".m4b":
             out = os.path.join(work, "out.m4a")
             subprocess.run([sync.FFMPEG, "-y", "-loglevel", "error", "-i", src, "-map", "0:a", "-map_chapters", "0",

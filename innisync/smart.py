@@ -10,7 +10,7 @@ import os
 import random
 import uuid
 
-from . import sync
+from . import files, sync
 
 PATH = os.path.join(sync.APP_DIR, "smart_playlists.json")
 
@@ -34,16 +34,13 @@ UNITS = ["songs", "minutes", "hours", "GB"]
 
 def load():
     try:
-        return json.load(open(PATH))
+        return files.read_json(PATH)
     except (OSError, ValueError):
         return []
 
 
 def _write(defs):
-    os.makedirs(sync.APP_DIR, exist_ok=True)
-    with open(PATH + ".tmp", "w") as f:
-        json.dump(defs, f, indent=1)
-    os.replace(PATH + ".tmp", PATH)
+    files.write_json(PATH, defs, indent=1)
 
 
 def validate(d):

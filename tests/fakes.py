@@ -31,7 +31,8 @@ class FakeY1:
         raise device.DeviceError(f"fake adb doesn't do {args[0]}")
 
     def push(self, local, remote):
-        self.files[remote] = open(local, "rb").read()
+        with open(local, "rb") as f:
+            self.files[remote] = f.read()
         self.pushed.append(remote)
 
     # ---- a small shell ----

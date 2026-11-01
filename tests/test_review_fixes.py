@@ -59,7 +59,8 @@ def test_a_converted_song_is_copied_then_the_old_file_removed(monkeypatch):
 def _write(work, name):
     import os
     p = os.path.join(work, name)
-    open(p, "wb").write(b"converted")
+    with open(p, "wb") as f:
+        f.write(b"converted")
     return p
 
 

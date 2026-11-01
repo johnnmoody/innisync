@@ -39,12 +39,39 @@
   }
   $effect(() => { checkUpdate(false); loadBackups(); loadUpdater(); return () => clearTimeout(autoTimer); });
   // when an update job finishes, show its result here
-  $effect(() => { const u = st.update; if (UPDATE_ACTIVE.includes(u.state) || u.state === "done" || u.state === "error") { updText = u.message; updErr = u.state === "error"; } });
+  $effect(() => {
+    const u = st.update;
+    if (UPDATE_ACTIVE.includes(u.state) || u.state === "done" || u.state === "error") { updText = u.message; updErr = u.state === "error"; }
+    if (u.state === "done" && !u.dryRun) refreshOffer();   // the player app may have changed
+  });
+  async function refreshOffer() { try { upd = await api("/api/update/check"); } catch { /* the message already says what happened */ } }
 
   async function updateClick() {
     if (!upd?.update) return checkUpdate(true);
-    if (!(await confirm(`Update to InniClassic ${upd.latest}?`, "InniSync backs up your Y1 first and keeps its settings. The player app restarts.", "Update"))) return;
+    if (!(await confirm(`Update to ${upd.app} ${upd.latest}?`, "InniSync backs up your Y1 first and keeps its settings. The player app restarts.", "Update"))) return;
     try { await api("/api/update/install", {}); pollUpdate(); } catch (e) { notice("The update didn't start", e.message); }
+  }
+
+  // InniClassic Autoplay: InniSync's build of the player, installed beside the original (see update.py)
+  const onAutoplay = $derived(d.launcher_pkg === "com.themoon.y1.autoplay");
+  async function useAutoplay() {
+    const a = upd.autoplay;
+    const ok = await confirm(`Switch to InniClassic Autoplay ${a.version}?`,
+      "It's the same player with one addition: when your queue ends, it keeps playing songs that go with the last one, " +
+      "picked by InniSync when it syncs. InniSync backs up your Y1, installs it beside InniClassic, and copies your " +
+      "settings to it. InniClassic is turned off, not removed, so you can switch back.", "Switch");
+    if (!ok) return;
+    try {
+      if (a.installed) { await api("/api/device/player-app", { app: "autoplay" }); updText = "Your Y1 plays with InniClassic Autoplay again."; await refreshDevice(true); refreshOffer(); }
+      else { await api("/api/update/install", { switch: true }); pollUpdate(); }
+    } catch (e) { notice("The switch didn't happen", e.message); }
+  }
+  async function useOriginal() {
+    const ok = await confirm("Go back to InniClassic?",
+      "Your Y1 switches back to the original InniClassic, with the settings it had. InniClassic Autoplay stays installed but off, so you can switch again later. The player app restarts.", "Switch Back");
+    if (!ok) return;
+    try { await api("/api/device/player-app", { app: "original" }); updText = "Your Y1 plays with InniClassic again."; await refreshDevice(true); refreshOffer(); }
+    catch (e) { notice("The switch didn't happen", e.message); }
   }
   async function backUp() {
     busy = true; backupErr = false; backupText = "Backing up your Y1…";
@@ -96,6 +123,14 @@
   <div class="rows">
     <button disabled={locked} onclick={updateClick}>{upd?.update ? "Update" : "Check for Update"}</button>
     <p class:err={updErr}>{updText}</p>
+
+    {#if upd?.autoplay && !onAutoplay}
+      <button disabled={locked} onclick={useAutoplay}>Use Autoplay…</button>
+      <p>InniClassic Autoplay {upd.autoplay.version} is InniSync's build of the player. When your queue ends, it keeps playing songs that go with the last one. Your settings come with it.</p>
+    {:else if onAutoplay}
+      <button disabled={locked} onclick={useOriginal}>Use InniClassic…</button>
+      <p>Your Y1 runs InniClassic Autoplay. You can switch back to the original InniClassic at any time; its settings are still there.</p>
+    {/if}
 
     <button disabled={locked} onclick={backUp}>Back Up</button>
     <p class:err={backupErr}>{auto.state === "running" ? "Backing up your Y1 automatically…" : backupText ||

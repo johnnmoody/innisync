@@ -20,7 +20,8 @@ def test_every_api_path_the_interface_calls_is_a_route():
     for folder, _, files in os.walk(UI):
         for f in files:
             if f.endswith((".svelte", ".js")):
-                called |= set(re.findall(r"""["'`](/api/[a-zA-Z0-9/_-]+)""", open(os.path.join(folder, f)).read()))
+                with open(os.path.join(folder, f), encoding="utf-8") as src:
+                    called |= set(re.findall(r"""["'`](/api/[a-zA-Z0-9/_-]+)""", src.read()))
     assert called, "found no API calls in the interface"
     missing = sorted(p for p in called if not routes.find("GET", p) and not routes.find("POST", p))
     assert missing == []

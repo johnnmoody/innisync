@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.request
 
-from . import device, lyrics, playcounts, podcasts, tools
+from . import device, files, lyrics, playcounts, podcasts, tools
 from .device import PLAYABLE, PLAYLIST_DIR, SD, SYNC_DIR
 from .jellyfin import APP_DIR
 
@@ -46,7 +46,7 @@ def settings_path(serial):
 
 def load_settings(serial):
     try:
-        return {**DEFAULT_SETTINGS, **json.load(open(settings_path(serial)))}
+        return {**DEFAULT_SETTINGS, **files.read_json(settings_path(serial))}
     except (OSError, ValueError):
         return dict(DEFAULT_SETTINGS)
 
@@ -59,7 +59,7 @@ def known_serials():
 
 def save_settings(serial, s):
     clean = {k: s.get(k, v) for k, v in DEFAULT_SETTINGS.items()}
-    json.dump(clean, open(settings_path(serial), "w"), indent=1)
+    files.write_json(settings_path(serial), clean, indent=1)
     return clean
 
 
@@ -465,7 +465,8 @@ class SyncJob:
                             self._error(f"Lyrics: {e}")
                     if text:
                         local, remote = os.path.join(work, "l.lrc"), os.path.splitext(m["path"])[0] + ".lrc"
-                        open(local, "w", encoding="utf-8").write(text)
+                        with open(local, "w", encoding="utf-8") as f:
+                            f.write(text)
                         device.push(local, remote)
                         m["lrc"] = remote
                     else:
