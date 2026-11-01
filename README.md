@@ -45,7 +45,8 @@ cd ui && npm run dev           # the interface, with the API proxied
 - `tools/` the app build and the icon drawing.
 
 ## InniClassic Autoplay
-Autoplay needs a small change to InniClassic, the Y1's player app, published separately as InniClassic Autoplay.
+Autoplay needs a small change to InniClassic, the Y1's player app, published separately as
+[InniClassic Autoplay](https://github.com/johnnmoody/inniclassic-autoplay).
 It installs beside the original InniClassic and reads the matches InniSync writes on each sync.
 InniClassic is by FabianZettl and is free for personal, non-commercial use.
 
